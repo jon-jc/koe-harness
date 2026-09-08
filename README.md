@@ -116,7 +116,7 @@ Built in milestones, each merged via its own PR.
 - [x] **M1 — Kernel.** Scopes, reactive services, event bus, plugin lifecycle.
 - [x] **M2 — Bilingual text layer.** Script analysis, JA/EN language ID with code-switch detection, 漢数字 parsing, scoring/display normalization profiles, MeCab tokenization with a labelled fallback.
 - [x] **M3 — Domain & providers.** Typed audio/transcript models, ASR×diarization fusion with word-level speaker attribution, provider protocols carrying cost/latency/quality metadata, deterministic mocks.
-- [ ] **M4 — Evaluation.** CER/WER/DER, bootstrap CIs, regression gate.
+- [x] **M4 — Evaluation.** CER/WER/DER with optimal speaker mapping, bootstrap CIs, paired permutation tests, slice-level reporting, significance-aware regression gates, `koe` CLI.
 - [ ] **M5 — Routing.** Budget-aware model selection, circuit breakers, fallback chains.
 - [ ] **M6 — Realtime pipeline.** VAD, endpointing, partial stabilization, ASR×diarization fusion.
 - [ ] **M7 — LLM layer.** 議事録 generation, groundedness guardrails, schema repair.

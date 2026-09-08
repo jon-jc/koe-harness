@@ -26,7 +26,9 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install
-        run: pip install -e ".[dev]"
+        # cli + ja so mypy type-checks against the real dependencies rather
+        # than reporting typer's decorators as untyped.
+        run: pip install -e ".[dev,cli,ja]"
       - name: Ruff (lint)
         run: ruff check src tests
       - name: Ruff (format check)
@@ -61,12 +63,21 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install
-        run: pip install -e ".[${{ matrix.extras }}]"
+        run: pip install -e ".[${{ matrix.extras }},cli]"
       - name: Report Japanese backend
         run: python -c "from koe.text import mecab_available; print('mecab_available:', mecab_available())"
       - name: Test
         # Live-provider tests are excluded: CI must be deterministic and free.
         run: pytest -m "not requires_keys" --cov=koe --cov-report=term-missing --cov-report=xml
+      - name: Evaluation harness smoke test
+        # The harness that guards quality has to be guarded too. A clean
+        # backend must score 0, and a clearly degraded one must be caught as a
+        # significant regression rather than waved through.
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -m koe.cli.main evaluate --degradation 0.0 --system clean
+          python -m koe.cli.main compare --baseline 0.0 --candidate 0.15
       - name: Upload coverage
         if: matrix.python-version == '3.12' && matrix.extras == 'dev,ja'
         uses: actions/upload-artifact@v4
