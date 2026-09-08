@@ -64,6 +64,18 @@ export interface StreamHandlers {
 export interface StartOptions {
   language: 'ja' | 'en' | 'unknown';
   partialIntervalMs?: number;
+  /**
+   * Endpointing overrides.
+   *
+   * Both are omitted unless the user has turned off the language defaults.
+   * Sending a number here replaces a per-language default that matters: the
+   * Japanese silence window is longer than the English one because speakers
+   * pause before sentence-final particles, and an English-tuned endpointer
+   * cuts there — removing the verb, which is where Japanese carries negation
+   * and tense. The server clamps whatever arrives.
+   */
+  silenceToEndMs?: number;
+  speechThresholdDb?: number;
 }
 
 /** Above this many buffered bytes, new frames are dropped rather than queued. */
@@ -129,6 +141,12 @@ export class StreamClient {
       type: 'start',
       language: options.language,
       partial_interval_ms: options.partialIntervalMs ?? 500,
+      ...(options.silenceToEndMs === undefined
+        ? {}
+        : { silence_to_end_ms: options.silenceToEndMs }),
+      ...(options.speechThresholdDb === undefined
+        ? {}
+        : { speech_threshold_db: options.speechThresholdDb }),
     });
   }
 

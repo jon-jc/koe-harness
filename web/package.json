@@ -5,8 +5,8 @@
   "description": "Realtime voice client for the koe harness",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --format=iife --target=es2020 --minify --sourcemap --outfile=dist/app.js",
-    "dev": "esbuild src/main.ts --bundle --format=iife --target=es2020 --sourcemap --watch --outfile=dist/app.js",
+    "build": "esbuild src/main.ts --bundle --format=iife --target=es2020 --charset=utf8 --minify --sourcemap --outfile=dist/app.js",
+    "dev": "esbuild src/main.ts --bundle --format=iife --target=es2020 --charset=utf8 --sourcemap --watch --outfile=dist/app.js",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

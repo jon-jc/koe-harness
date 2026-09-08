@@ -1162,3 +1162,263 @@ mark.find {
 }
 
 .keys kbd { justify-self: start; }
+
+/* ---------------------------------------------------------------- settings panel */
+
+/*
+ * A wider dialog with a section rail. Five sections of controls stacked into
+ * one scrolling column would bury the audio settings — the ones that decide
+ * whether the app is listening to the right thing at all — under everything
+ * else, and a panel you have to scroll to find is a panel people stop opening.
+ */
+.modal.wide {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.modal-split {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.modal-nav {
+  flex: none;
+  width: 168px;
+  padding: calc(var(--step) * 3);
+  border-inline-end: 1px solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.nav-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.nav-item.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.modal-split .modal-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A label above a control, distinct from the explanatory .note below one. */
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 14px 0 6px;
+}
+
+.select.grow,
+.input.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- choices */
+
+/*
+ * Radio cards rather than a <select>: each option carries a sentence of
+ * consequence ("this is how you transcribe the far side of a call"), and that
+ * sentence is the part that makes the choice obvious. A dropdown can only show
+ * the name.
+ */
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+}
+
+.choice {
+  appearance: none;
+  text-align: start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  padding: calc(var(--step) * 3);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.choice:hover {
+  border-color: var(--border-strong);
+}
+
+.choice.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choice-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.choice-hint {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+/* A note that carries a caveat rather than an aside. */
+.note.callout {
+  border-inline-start: 3px solid var(--warn);
+  background: var(--warn-soft);
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin: calc(var(--step) * 3) 0 0;
+  line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------- segmented */
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.seg {
+  appearance: none;
+  border: 0;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.seg + .seg {
+  border-inline-start: 1px solid var(--border);
+}
+
+.seg:hover {
+  color: var(--text);
+}
+
+.seg.on {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- switches */
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  padding: 7px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/*
+ * A styled checkbox rather than a div pretending to be one: it keeps the
+ * native focus ring, keyboard behaviour, and the accessibility tree entry
+ * that a role="switch" div has to reconstruct by hand.
+ */
+.switch {
+  appearance: none;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-start: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch:checked::after {
+  background: #fff;
+  transform: translateX(14px);
+}
+
+/* ---------------------------------------------------------------- sliders */
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+}
+
+.range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  height: 20px;
+}
+
+.readout {
+  flex: none;
+  min-width: 66px;
+  text-align: end;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .modal-split {
+    flex-direction: column;
+  }
+
+  .modal-nav {
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border);
+  }
+
+  .nav-item {
+    white-space: nowrap;
+  }
+}

@@ -1,31 +1,68 @@
 /**
- * The settings dialog — provider API keys, and the keyboard help.
+ * The settings panel, and the keyboard help.
  *
  * Built on the native `<dialog>` element rather than a positioned div, so the
  * browser supplies the focus trap, Escape-to-close, inertness of the page
  * behind it, and the right semantics for assistive technology. Those are the
  * four things hand-rolled modals reliably get wrong.
  *
- * Three rules the key-entry flow follows, each one a decision rather than a
- * default:
+ * Five sections, in the order someone actually needs them: **Audio** first,
+ * because a meeting tool that is listening to the wrong thing is useless no
+ * matter how good the rest is; then **Recognition**, **Models**, and the two
+ * that are matters of taste.
+ *
+ * Two rules run through the whole panel.
+ *
+ * **Every control changes something real.** The endpointing sliders are sent
+ * on the next session and clamped server-side; the gain slider is applied to a
+ * live `GainNode` and takes effect mid-recording. There is no setting here
+ * that is only remembered.
+ *
+ * **Nothing claims more than it knows.** The audio-source options say what
+ * Windows will and will not give you rather than letting someone pick a single
+ * application window and quietly transcribe silence, and a key is never
+ * reported as valid until something has checked it.
+ *
+ * The key-entry flow follows three of its own:
  *
  * **A key is write-only.** The input is always empty on open. There is nothing
- * to read back — the server returns a fingerprint and never the key — so
- * pre-filling would mean either inventing a placeholder that looks like data or
- * asking the server for a secret it should not hand out.
+ * to read back — the server returns a fingerprint and never the key.
  *
  * **Saving and testing are separate.** Verification costs a request, and a
- * save that silently spends money is a surprise. Test is a button with a
- * visible result.
+ * save that silently spends money is a surprise.
  *
  * **The failure mode is named.** "Invalid" and "error" are different problems:
- * one means fix your key, the other means check your network. Collapsing them
- * sends people to regenerate a key that was fine.
+ * one means fix your key, the other means check your network.
  */
 
+import { canCaptureSystemAudio, listInputDevices, type InputDevice } from "./audio";
 import { h } from "./dom";
-import type { Strings } from "./i18n";
+import type { Strings, UILang } from "./i18n";
+import { DEFAULTS, LIMITS, type AudioSource, type Prefs } from "./prefs";
+import type { ASRLang } from "./state";
 import type { Notifications } from "./toast";
+
+export type Theme = "light" | "dark" | "system";
+
+/**
+ * What the panel needs from the application.
+ *
+ * An interface rather than a reference to `App` so the dialog cannot reach
+ * into rendering or session state: it reads and writes settings, and that is
+ * the whole of its access.
+ */
+export interface SettingsHost {
+  getPrefs(): Prefs;
+  setPrefs(patch: Partial<Prefs>): void;
+  getTheme(): Theme;
+  setTheme(theme: Theme): void;
+  getUiLang(): UILang;
+  setUiLang(lang: UILang): void;
+  getAsrLang(): ASRLang;
+  setAsrLang(lang: ASRLang): void;
+  /** A key was added or removed; the live provider may have changed. */
+  onCredentialsChanged(): void;
+}
 
 export interface ProviderCredential {
   provider: string;
@@ -65,17 +102,31 @@ interface CredentialListing {
   forced_mock: boolean;
 }
 
+interface Health {
+  version: string;
+  japanese_tokenizer: string;
+}
+
+type Section = "audio" | "recognition" | "models" | "appearance" | "about";
+
+const SECTIONS: readonly Section[] = ["audio", "recognition", "models", "appearance", "about"];
+
 export class SettingsDialog {
   private readonly dialog: HTMLDialogElement;
+  private readonly nav: HTMLElement;
   private readonly body: HTMLElement;
+  private section: Section = "audio";
   private listing: CredentialListing | null = null;
+  private health: Health | null = null;
+  private devices: InputDevice[] = [];
 
   constructor(
     private readonly notify: Notifications,
     private strings: Strings,
-    private readonly onChanged: () => void,
+    private readonly host: SettingsHost,
   ) {
-    this.dialog = h("dialog", { class: "modal", "aria-labelledby": "settings-title" });
+    this.dialog = h("dialog", { class: "modal wide", "aria-labelledby": "settings-title" });
+    this.nav = h("nav", { class: "modal-nav", "aria-label": "sections" });
     this.body = h("div", { class: "modal-body" });
     this.build();
     document.body.append(this.dialog);
@@ -87,7 +138,7 @@ export class SettingsDialog {
     if (title) title.textContent = strings.settings;
     const close = this.dialog.querySelector<HTMLButtonElement>(".modal-foot .btn");
     if (close) close.textContent = strings.close;
-    if (this.dialog.open) void this.refresh();
+    if (this.dialog.open) this.render();
   }
 
   private build(): void {
@@ -98,43 +149,291 @@ export class SettingsDialog {
     );
 
     const foot = h("div", { class: "modal-foot" });
-    const spacer = h("div", { style: "flex:1" });
     const close = h("button", { class: "btn", type: "button", text: this.strings.close });
     close.addEventListener("click", () => this.dialog.close());
-    foot.append(spacer, close);
+    foot.append(h("div", { style: "flex:1" }), close);
 
-    this.dialog.append(head, this.body, foot);
+    // Arrow keys move between sections, which is what a vertical list of
+    // buttons acting as a tablist has to support to be usable by keyboard.
+    this.nav.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+      if (step === 0) return;
+      event.preventDefault();
+      const at = SECTIONS.indexOf(this.section);
+      this.show(SECTIONS[(at + step + SECTIONS.length) % SECTIONS.length]);
+      this.nav.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+    });
+
+    this.dialog.append(head, h("div", { class: "modal-split" }, this.nav, this.body), foot);
   }
 
   async open(): Promise<void> {
     this.dialog.showModal();
-    await this.refresh();
-  }
-
-  private async refresh(): Promise<void> {
-    try {
-      const response = await fetch("/v1/credentials");
-      if (!response.ok) throw new Error(String(response.status));
-      this.listing = (await response.json()) as CredentialListing;
-    } catch {
-      this.body.replaceChildren(
-        h("p", { class: "note", text: "Could not load provider settings." }),
-      );
-      return;
-    }
+    this.render();
+    // Fetched in parallel and rendered as they land, so the panel is usable
+    // immediately rather than blank until the slowest request returns.
+    await Promise.all([this.loadCredentials(), this.loadHealth(), this.loadDevices()]);
     this.render();
   }
 
+  private show(section: Section): void {
+    this.section = section;
+    this.render();
+  }
+
+  /* ------------------------------------------------------------- loading */
+
+  private async loadCredentials(): Promise<void> {
+    try {
+      const response = await fetch("/v1/credentials");
+      if (response.ok) this.listing = (await response.json()) as CredentialListing;
+    } catch {
+      /* the panel renders without it; the Models section says so */
+    }
+  }
+
+  private async loadHealth(): Promise<void> {
+    try {
+      const response = await fetch("/health");
+      if (response.ok) this.health = (await response.json()) as Health;
+    } catch {
+      /* About degrades to showing nothing rather than failing */
+    }
+  }
+
+  private async loadDevices(): Promise<void> {
+    this.devices = await listInputDevices();
+  }
+
+  /* -------------------------------------------------------------- render */
+
   private render(): void {
     const s = this.strings;
-    const listing = this.listing;
-    if (!listing) return;
+    const labels: Record<Section, string> = {
+      audio: s.secAudio,
+      recognition: s.secRecognition,
+      models: s.secModels,
+      appearance: s.secAppearance,
+      about: s.secAbout,
+    };
 
+    this.nav.replaceChildren(
+      ...SECTIONS.map((section) => {
+        const selected = section === this.section;
+        const button = h("button", {
+          class: `nav-item${selected ? " on" : ""}`,
+          type: "button",
+          role: "tab",
+          "aria-selected": String(selected),
+          text: labels[section],
+        });
+        button.tabIndex = selected ? 0 : -1;
+        button.addEventListener("click", () => this.show(section));
+        return button;
+      }),
+    );
+
+    this.body.replaceChildren(
+      ...(this.section === "audio"
+        ? this.audioSection()
+        : this.section === "recognition"
+          ? this.recognitionSection()
+          : this.section === "models"
+            ? this.modelsSection()
+            : this.section === "appearance"
+              ? this.appearanceSection()
+              : this.aboutSection()),
+    );
+    this.body.scrollTop = 0;
+  }
+
+  /* --------------------------------------------------------------- audio */
+
+  private audioSection(): HTMLElement[] {
+    const s = this.strings;
+    const prefs = this.host.getPrefs();
     const parts: HTMLElement[] = [];
+
+    const hints: Record<AudioSource, string> = {
+      microphone: s.sourceMicHint,
+      system: s.sourceSystemHint,
+      both: s.sourceBothHint,
+    };
+    const sourceLabels: Record<AudioSource, string> = {
+      microphone: s.sourceMic,
+      system: s.sourceSystem,
+      both: s.sourceBoth,
+    };
+
+    parts.push(this.heading(s.audioSource));
+    const group = h("div", { class: "choices", role: "radiogroup", "aria-label": s.audioSource });
+    const sources: AudioSource[] = canCaptureSystemAudio()
+      ? ["microphone", "system", "both"]
+      : ["microphone"];
+
+    for (const source of sources) {
+      const on = prefs.source === source;
+      const choice = h("button", {
+        class: `choice${on ? " on" : ""}`,
+        type: "button",
+        role: "radio",
+        "aria-checked": String(on),
+      });
+      choice.append(
+        h("span", { class: "choice-name", text: sourceLabels[source] }),
+        h("span", { class: "choice-hint", text: hints[source] }),
+      );
+      choice.addEventListener("click", () => {
+        this.host.setPrefs({ source });
+        this.render();
+      });
+      group.append(choice);
+    }
+    parts.push(group);
+
+    if (prefs.source !== "microphone") {
+      parts.push(h("p", { class: "note callout", text: s.windowsAudioNote }));
+    }
+
+    if (prefs.source !== "system") {
+      parts.push(this.heading(s.inputDevice));
+      const row = h("div", { class: "row" });
+      const select = h("select", { class: "select grow" }) as HTMLSelectElement;
+      select.append(h("option", { value: "", text: s.systemDefault }));
+      for (const device of this.devices) {
+        select.append(h("option", { value: device.deviceId, text: device.label }));
+      }
+      select.value = this.devices.some((d) => d.deviceId === prefs.inputDeviceId)
+        ? prefs.inputDeviceId
+        : "";
+      select.addEventListener("change", () => {
+        this.host.setPrefs({ inputDeviceId: select.value });
+      });
+
+      const rescan = h("button", { class: "btn ghost", type: "button", text: s.refreshDevices });
+      rescan.addEventListener("click", () => {
+        void this.loadDevices().then(() => this.render());
+      });
+      row.append(select, rescan);
+      parts.push(row);
+
+      if (this.devices.length === 0) {
+        parts.push(h("p", { class: "note", text: s.noInputDevices }));
+      } else if (this.devices.every((d) => /^Microphone \d+$/.test(d.label))) {
+        // Browsers withhold device labels until the page holds a media
+        // permission, so a list of "Microphone 1/2/3" is expected, not broken.
+        parts.push(h("p", { class: "note", text: s.deviceNamesHidden }));
+      }
+
+      parts.push(this.heading(s.processing));
+      parts.push(
+        this.toggle(s.echoCancellation, prefs.echoCancellation, (on) =>
+          this.host.setPrefs({ echoCancellation: on }),
+        ),
+        this.toggle(s.noiseSuppression, prefs.noiseSuppression, (on) =>
+          this.host.setPrefs({ noiseSuppression: on }),
+        ),
+        this.toggle(s.autoGainControl, prefs.autoGainControl, (on) =>
+          this.host.setPrefs({ autoGainControl: on }),
+        ),
+        h("p", { class: "note", text: s.processingHint }),
+      );
+    }
+
+    parts.push(this.heading(s.inputGain));
+    parts.push(
+      this.slider(
+        prefs.gain,
+        LIMITS.gain,
+        (value) => `${value.toFixed(2)}×`,
+        (value) => this.host.setPrefs({ gain: value }),
+      ),
+      h("p", { class: "note", text: s.inputGainHint }),
+    );
+
+    return parts;
+  }
+
+  /* --------------------------------------------------------- recognition */
+
+  private recognitionSection(): HTMLElement[] {
+    const s = this.strings;
+    const prefs = this.host.getPrefs();
+    const parts: HTMLElement[] = [];
+
+    parts.push(this.heading(s.asrLanguage));
+    const language = h("select", { class: "select grow" }) as HTMLSelectElement;
+    language.append(
+      h("option", { value: "ja", text: "日本語" }),
+      h("option", { value: "en", text: "English" }),
+      h("option", { value: "unknown", text: s.auto }),
+    );
+    language.value = this.host.getAsrLang();
+    language.addEventListener("change", () => {
+      this.host.setAsrLang(language.value as ASRLang);
+      this.render();
+    });
+    parts.push(h("div", { class: "row" }, language));
+
+    parts.push(this.heading(s.partialInterval));
+    parts.push(
+      this.slider(
+        prefs.partialIntervalMs,
+        LIMITS.partialIntervalMs,
+        (value) => `${value.toFixed(0)} ms`,
+        (value) => this.host.setPrefs({ partialIntervalMs: value }),
+      ),
+      h("p", { class: "note", text: s.partialIntervalHint }),
+    );
+
+    parts.push(this.heading(s.endpointing));
+    parts.push(
+      this.toggle(s.useLanguageDefaults, prefs.useEndpointDefaults, (on) => {
+        this.host.setPrefs({ useEndpointDefaults: on });
+        this.render();
+      }),
+      h("p", { class: "note", text: s.useLanguageDefaultsHint }),
+    );
+
+    if (!prefs.useEndpointDefaults) {
+      parts.push(
+        h("p", { class: "label", text: s.silenceToEnd }),
+        this.slider(
+          prefs.silenceToEndMs,
+          LIMITS.silenceToEndMs,
+          (value) => `${value.toFixed(0)} ms`,
+          (value) => this.host.setPrefs({ silenceToEndMs: value }),
+        ),
+        h("p", { class: "note", text: s.silenceToEndHint }),
+        h("p", { class: "label", text: s.speechThreshold }),
+        this.slider(
+          prefs.speechThresholdDb,
+          LIMITS.speechThresholdDb,
+          (value) => `${value.toFixed(0)} dB`,
+          (value) => this.host.setPrefs({ speechThresholdDb: value }),
+        ),
+        h("p", { class: "note", text: s.speechThresholdHint }),
+      );
+    }
+
+    return parts;
+  }
+
+  /* -------------------------------------------------------------- models */
+
+  private modelsSection(): HTMLElement[] {
+    const s = this.strings;
+    const parts: HTMLElement[] = [];
+    const listing = this.listing;
+
+    if (!listing) {
+      parts.push(h("p", { class: "note", text: s.cannotConnect }));
+      return parts;
+    }
 
     // What is actually in use right now, stated before any configuration —
     // it is the question someone opening this panel is asking.
-    const usingMock = listing.active_llm === "mock" || listing.active_llm.startsWith("mock");
+    const usingMock = !listing.active_llm || listing.active_llm.startsWith("mock");
     const active = h("div", { class: "row", style: "margin-bottom:14px" });
     active.append(
       h("span", { class: "note", text: `${s.activeModel}:` }),
@@ -148,13 +447,8 @@ export class SettingsDialog {
       parts.push(h("p", { class: "note", style: "margin:-8px 0 14px", text: s.usingMockHint }));
     }
 
-    parts.push(h("h3", { class: "pane-title", style: "margin-bottom:6px", text: s.apiKeys }));
     parts.push(h("p", { class: "note", style: "margin:0 0 14px", text: s.apiKeysHint }));
-
-    for (const provider of listing.providers) {
-      parts.push(this.providerCard(provider));
-    }
-
+    for (const provider of listing.providers) parts.push(this.providerCard(provider));
     parts.push(
       h("p", {
         class: "note",
@@ -162,9 +456,130 @@ export class SettingsDialog {
         text: s.storageNote,
       }),
     );
-
-    this.body.replaceChildren(...parts);
+    return parts;
   }
+
+  /* ---------------------------------------------------------- appearance */
+
+  private appearanceSection(): HTMLElement[] {
+    const s = this.strings;
+    const parts: HTMLElement[] = [];
+
+    parts.push(this.heading(s.themeLabel));
+    const themes: Array<[Theme, string]> = [
+      ["system", s.themeSystem],
+      ["light", s.themeLight],
+      ["dark", s.themeDark],
+    ];
+    const current = this.host.getTheme();
+    const group = h("div", { class: "segmented", role: "radiogroup", "aria-label": s.themeLabel });
+    for (const [theme, label] of themes) {
+      const on = theme === current;
+      const button = h("button", {
+        class: `seg${on ? " on" : ""}`,
+        type: "button",
+        role: "radio",
+        "aria-checked": String(on),
+        text: label,
+      });
+      button.addEventListener("click", () => {
+        this.host.setTheme(theme);
+        this.render();
+      });
+      group.append(button);
+    }
+    parts.push(group);
+
+    parts.push(this.heading(s.uiLanguage));
+    const language = h("select", { class: "select grow" }) as HTMLSelectElement;
+    language.append(
+      h("option", { value: "ja", text: "日本語" }),
+      h("option", { value: "en", text: "English" }),
+    );
+    language.value = this.host.getUiLang();
+    language.addEventListener("change", () => {
+      this.host.setUiLang(language.value as UILang);
+    });
+    parts.push(h("div", { class: "row" }, language));
+    return parts;
+  }
+
+  /* --------------------------------------------------------------- about */
+
+  private aboutSection(): HTMLElement[] {
+    const s = this.strings;
+    const parts: HTMLElement[] = [];
+    const rows: Array<[string, string]> = [];
+
+    if (this.health) {
+      rows.push([s.version, this.health.version]);
+      rows.push([s.japaneseTokenizer, this.health.japanese_tokenizer]);
+    }
+    if (this.listing) {
+      const mock = !this.listing.active_llm || this.listing.active_llm.startsWith("mock");
+      rows.push([s.activeModel, mock ? s.usingMock : this.listing.active_llm]);
+    }
+
+    const table = h("table", { class: "tbl" });
+    const body = h("tbody");
+    for (const [label, value] of rows) {
+      body.append(h("tr", {}, h("td", { text: label }), h("td", { class: "num", text: value })));
+    }
+    table.append(body);
+    parts.push(table);
+
+    parts.push(this.heading(s.restoreDefaults));
+    const reset = h("button", { class: "btn ghost", type: "button", text: s.restoreDefaults });
+    reset.addEventListener("click", () => {
+      this.host.setPrefs({ ...DEFAULTS });
+      this.notify.ok(s.restored);
+      this.render();
+    });
+    parts.push(h("div", { class: "row" }, reset), h("p", { class: "note", text: s.restoreDefaultsHint }));
+    return parts;
+  }
+
+  /* ------------------------------------------------------------- widgets */
+
+  private heading(text: string): HTMLElement {
+    return h("h3", { class: "pane-title", style: "margin:18px 0 8px", text });
+  }
+
+  private toggle(label: string, on: boolean, onChange: (on: boolean) => void): HTMLElement {
+    const row = h("label", { class: "switch-row" });
+    const input = h("input", { type: "checkbox", class: "switch" }) as HTMLInputElement;
+    input.checked = on;
+    input.addEventListener("change", () => onChange(input.checked));
+    row.append(input, h("span", { text: label }));
+    return row;
+  }
+
+  private slider(
+    value: number,
+    limits: { min: number; max: number; step: number },
+    format: (value: number) => string,
+    onChange: (value: number) => void,
+  ): HTMLElement {
+    const row = h("div", { class: "slider-row" });
+    const input = h("input", {
+      type: "range",
+      class: "range",
+      min: String(limits.min),
+      max: String(limits.max),
+      step: String(limits.step),
+      value: String(value),
+    }) as HTMLInputElement;
+    const readout = h("span", { class: "readout", text: format(value) });
+    input.addEventListener("input", () => {
+      const next = Number(input.value);
+      readout.textContent = format(next);
+      onChange(next);
+    });
+    row.append(input, readout);
+    return row;
+  }
+
+  /* --------------------------------------------------------- credentials */
 
   private providerCard(provider: ProviderCredential): HTMLElement {
     const s = this.strings;
@@ -199,9 +614,7 @@ export class SettingsDialog {
     }
 
     if (!provider.editable) {
-      card.append(
-        h("p", { class: "note", text: `${s.fromEnvironmentHint} (${provider.env_var})` }),
-      );
+      card.append(h("p", { class: "note", text: `${s.fromEnvironmentHint} (${provider.env_var})` }));
       card.append(this.actions(provider));
       return card;
     }
@@ -258,14 +671,15 @@ export class SettingsDialog {
     }
 
     row.append(h("div", { style: "flex:1" }));
-    const docs = h("a", {
-      class: "note",
-      href: provider.docs_url,
-      target: "_blank",
-      rel: "noopener noreferrer",
-      text: s.getKey,
-    });
-    row.append(docs);
+    row.append(
+      h("a", {
+        class: "note",
+        href: provider.docs_url,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        text: s.getKey,
+      }),
+    );
     return row;
   }
 
@@ -306,8 +720,6 @@ export class SettingsDialog {
     return template.replace(/\{(\w+)\}/g, (whole, key: string) => context[key] ?? whole);
   }
 
-  // -- actions -------------------------------------------------------------
-
   private async save(
     provider: ProviderCredential,
     input: HTMLInputElement,
@@ -334,8 +746,9 @@ export class SettingsDialog {
       input.value = "";
       input.removeAttribute("aria-invalid");
       this.notify.ok(`${provider.label} — ${this.strings.saved}`);
-      this.onChanged();
-      await this.refresh();
+      this.host.onCredentialsChanged();
+      await this.loadCredentials();
+      this.render();
     } catch {
       this.notify.error(this.strings.cannotConnect);
     } finally {
@@ -361,7 +774,8 @@ export class SettingsDialog {
       if (updated.status === "valid") this.notify.ok(message);
       else if (updated.status === "invalid") this.notify.error(message);
       else this.notify.show(message, "info");
-      await this.refresh();
+      await this.loadCredentials();
+      this.render();
     } catch {
       this.notify.error(this.strings.cannotConnect);
     } finally {
@@ -375,8 +789,9 @@ export class SettingsDialog {
       const response = await fetch(`/v1/credentials/${provider.provider}`, { method: "DELETE" });
       if (!response.ok) throw new Error(String(response.status));
       this.notify.ok(`${provider.label} — ${this.strings.removed}`);
-      this.onChanged();
-      await this.refresh();
+      this.host.onCredentialsChanged();
+      await this.loadCredentials();
+      this.render();
     } catch {
       this.notify.error(this.strings.cannotConnect);
     }
