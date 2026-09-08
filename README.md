@@ -308,6 +308,27 @@ it leaves the browser — ~6× less uplink than 48 kHz float, and off the main
 thread so a UI repaint cannot drop input frames. Committed text renders normally
 while the tail the model has not settled on is greyed.
 
+#### Listening to a call, not just a room
+
+Most meetings are not in one room, so **Settings → Audio** offers three sources:
+
+| Source | For |
+|---|---|
+| Microphone | An in-person meeting, on a chosen input device |
+| Screen or window audio | The far side of an online meeting — you pick what to share when recording starts |
+| Both, mixed | A hybrid meeting: your voice from the mic, everyone else from the shared audio |
+
+On Windows, audio is only available when sharing an **entire screen or a browser
+tab** — a single application window carries none (a Chromium limitation). The
+panel says so before you choose, and a share that arrives with no audio track is
+refused with that explanation rather than transcribed as silence.
+
+The same panel exposes the interim-result interval and, behind an explicit
+opt-out, the two endpointing numbers. The opt-out is deliberate: the silence
+window is longer for Japanese than English, and sending a number would overwrite
+that, so nothing is sent unless you turn the defaults off. Whatever arrives is
+clamped server-side.
+
 ### Desktop application
 
 Download `koe-setup-<version>.exe` from
