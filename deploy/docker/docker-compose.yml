@@ -1,0 +1,42 @@
+# Local production-shaped run: the same image CI builds, with the same
+# environment contract, so "works in compose" means something about deployment.
+services:
+  koe:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: koe:local
+    ports:
+      - "8000:8000"
+    environment:
+      # `local` rather than `production` so the startup policy check does not
+      # refuse a wildcard CORS origin on a developer machine.
+      KOE_ENVIRONMENT: local
+      KOE_LOG_LEVEL: INFO
+      KOE_STRUCTURED_LOGS: "true"
+      KOE_MAX_CONCURRENT_SESSIONS: "32"
+      KOE_SESSION_BUDGET_USD: "2.0"
+      KOE_DEFAULT_LANGUAGE: ja
+      # Unset -> the service runs on deterministic mocks, so this comes up
+      # with no credentials.
+      KOE_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      KOE_OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          # A streaming session holds an audio buffer and a decoder; this is
+          # sized for the 32-session cap above.
+          memory: 2G
+          cpus: "2.0"

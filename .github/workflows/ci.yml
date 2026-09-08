@@ -106,3 +106,53 @@ jobs:
         # dist/app.js is committed so `koe serve` works without a Node
         # toolchain. That only holds if it matches the sources.
         run: git diff --exit-code -- dist/app.js || (echo "::error::web/dist/app.js is out of date; run npm run build and commit it" && exit 1)
+
+  terraform:
+    name: terraform (fmt & validate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Format
+        run: terraform fmt -check -recursive
+      - name: Init (no backend)
+        run: terraform init -backend=false
+      - name: Validate
+        run: terraform validate
+
+  docker:
+    name: docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: false
+          load: true
+          tags: koe:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: The image must start and serve health without credentials
+        run: |
+          docker run -d --name koe -p 8000:8000 -e KOE_ENVIRONMENT=local koe:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health > /tmp/health.json; then
+              echo "healthy after ${i}s"; cat /tmp/health.json; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became healthy"
+          docker logs koe
+          exit 1
+      - name: Stop
+        if: always()
+        run: docker rm -f koe || true
