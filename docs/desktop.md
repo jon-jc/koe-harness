@@ -1,0 +1,180 @@
+# The desktop application
+
+A native window over the same FastAPI application the server deployment runs,
+on loopback. **Nothing is stubbed for desktop** — the window is a client of the
+real API, which is what stops the two builds from drifting apart.
+
+```bash
+pip install -e ".[api,cli,ja,desktop]"
+python -m koe.desktop          # or: koe-desktop
+```
+
+## Building the installer
+
+```bash
+pip install -e ".[api,llm,ja,cli,desktop,build]"
+python packaging/build.py --installer
+```
+
+Produces:
+
+| Artifact | Size |
+|---|---|
+| `dist/koe/` (portable folder) | 293 MB |
+| `dist/koe-setup-<version>.exe` | 47 MB |
+
+Flags: `--no-japanese` (drops MeCab, ~248 MB smaller), `--skip-web` (use the
+committed bundle), `--skip-verify`, `--clean`.
+
+CI builds this on `windows-latest` on every push and uploads the installer as
+an artifact, so the build is proven on a clean machine rather than only on the
+one it was written on.
+
+---
+
+## Why a webview
+
+| Option | Why not |
+|---|---|
+| **Electron** | Ships a second copy of Chromium (~150 MB) to run a 38 KB client, on a platform that already has WebView2 |
+| **Tauri** | Smaller, but adds a Rust toolchain to a project that is Python and TypeScript |
+| **A native toolkit** (Qt/wx) | A second implementation of the transcript view — precisely the thing most likely to diverge. And `AudioWorklet`, which the capture path depends on, does not exist outside a browser engine |
+
+pywebview over WebView2 reuses the existing client, adds no second runtime, and
+keeps the capture path identical to the browser build. The cost is a dependency
+on the system WebView2 runtime, which ships with Windows 11 and updated Windows
+10 — checked at startup and reported as a clear message rather than a blank
+window.
+
+## Size
+
+293 MB unpacked, 47 MB compressed. **248 MB of that is `unidic-lite`**, the
+Japanese morphological dictionary, and it is the entire reason for the
+`--no-japanese` flag.
+
+Including it is the default because Japanese is the product's premise. koe
+degrades honestly without it — falling back to character segmentation and
+*labelling* that fallback wherever a number depends on it (see
+`tests/text/test_backend_parity.py`) — so the slim build is defensible, just
+not the right default for this audience.
+
+---
+
+## Production concerns, and how each is handled
+
+### Startup
+
+**The port is bound before the server starts.** The app asks the OS for port 0
+and reads back the assignment, so the window knows its URL with certainty. The
+alternative — guess a port, poll until something answers — has a startup race
+*and* a conflict whenever the guess is taken, and both failures look identical
+to the user: "it didn't open".
+
+**Startup is awaited, not slept on.** The window does not load until uvicorn
+reports the application lifespan complete.
+
+### Single instance
+
+Double-clicking an icon twice is a normal thing to do. Two copies would each
+start a server, each hold the microphone, and each write the same settings
+file.
+
+The lock is a PID file. The subtlety is **stale locks**: after a crash the file
+remains, and a naive implementation then refuses to ever start again. A lock
+whose PID is no longer alive is taken over. A PID can be recycled, so this can
+theoretically report a stale lock as live — the failure mode is a spurious
+"already running" rather than two instances corrupting each other, which is the
+right way round.
+
+### Shutdown
+
+Closing the window saves geometry, then asks uvicorn to stop and gives it up to
+10 seconds to drain. Past the deadline the process exits anyway: **a GUI that
+will not close is worse than one that drops a session.**
+
+### Settings
+
+Window geometry, theme and language persist to `%APPDATA%\koe\settings.json`,
+written atomically via a temporary file and a replace — a crash partway through
+a direct write leaves truncated JSON, and the next launch would then lose
+*every* preference rather than the one being changed.
+
+Every read is defensive: truncated files, non-object JSON, unknown keys from a
+newer version, and wrong types all fall back to defaults rather than stopping
+the app. A window restored onto a monitor that has since been unplugged is
+re-centred instead of opening off-screen, where it is running but invisible and
+the user concludes it failed to start.
+
+### Logging
+
+`%LOCALAPPDATA%\koe\logs\koe.log`, rotating at 2 MB × 3. Structured JSON, the
+same format the server writes.
+
+This matters more on desktop than on a server: a frozen GUI app has no console,
+so `stderr` goes nowhere, and without a file a crash report is "it closed" and
+nothing else.
+
+### Crash reporting
+
+`sys.excepthook` and `threading.excepthook` log the traceback and show a message
+box naming the log directory. A windowed application that exits silently is
+indistinguishable from one that never launched.
+
+### Capability probe
+
+On load, the app inspects what the embedded browser can actually do and logs it:
+
+```json
+{"message": "webview capabilities", "secureContext": true, "mediaDevices": true,
+ "audioWorklet": true, "webSocket": true, "userAgent": "...Edg/152.0.0.0"}
+```
+
+Support for a desktop app is somebody describing a symptom over email, so the
+log has to answer the first question — *could it even reach the microphone?* —
+without a round trip. It inspects capability only; it deliberately does not call
+`getUserMedia`, which would switch the microphone on without the user asking.
+
+### Microphone permission
+
+WebView2 treats an unhandled permission request conservatively, and pywebview
+registers no handler — so without intervention, pressing Record produces a
+silent denial.
+
+The app sets `--use-fake-ui-for-media-stream` on the embedded browser only. This
+is a genuine trade, stated plainly: the app cannot render its own permission
+prompt, so it grants capture to its own loopback origin and relies on the
+recording state being unmistakable in the UI. It does not affect the user's
+actual browser.
+
+### Headless mode
+
+`KOE_DESKTOP_HEADLESS=1` starts the server without a window and writes the port
+to `KOE_DESKTOP_PORT_FILE`. This is what `packaging/build.py` uses to verify a
+frozen build, and what lets CI test the artifact where there is no display.
+
+---
+
+## Verified
+
+Every claim below was checked against the built artifact, not assumed:
+
+```
+exe properties     ProductName koe · FileVersion 0.1.0 · publisher jon-jc
+frozen launch      health ok · japanese_tokenizer mecab
+frozen pipeline    6 segments via mock-accurate, speaker 田中
+installer          silent install → 299 MB, koe.exe + uninstaller present
+installed binary   /health ok, /v1/transcribe returns 6 JA segments
+uninstall          clean; settings and meetings deliberately preserved
+webview            secureContext, mediaDevices, audioWorklet all true
+```
+
+## Not done
+
+- **The binary is unsigned.** Windows SmartScreen will warn on first run. Code
+  signing needs a certificate; without one, signing is not something that can be
+  faked convincingly and pretending otherwise would be worse than saying so.
+- **No auto-update.** The installer supports in-place upgrade (same `AppId`),
+  but nothing checks for new versions.
+- **Windows only.** The packaging is Windows-specific. The application code is
+  not — `koe.desktop.paths` already resolves macOS and XDG locations — but no
+  `.app` or `.AppImage` is produced.

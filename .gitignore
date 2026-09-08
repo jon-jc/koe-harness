@@ -52,6 +52,12 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# --- Desktop build artifacts ---
+/build/
+/dist/
+*.spec.bak
+packaging/version_info.txt
+
 # --- Project runtime artifacts ---
 *.log
 .koe_cache/

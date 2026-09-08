@@ -293,6 +293,25 @@ it leaves the browser — ~6× less uplink than 48 kHz float, and off the main
 thread so a UI repaint cannot drop input frames. Committed text renders normally
 while the tail the model has not settled on is greyed.
 
+### Desktop application
+
+```bash
+pip install -e ".[api,cli,ja,desktop]"
+python -m koe.desktop            # or: koe-desktop
+```
+
+A native window over the same API the server deployment runs — nothing is
+stubbed for desktop, so the two builds cannot drift apart. Build an installer
+with `python packaging/build.py --installer`: a 47 MB `koe-setup-<version>.exe`
+that installs per-user with no UAC prompt.
+
+pywebview over WebView2 rather than Electron: the client already exists and is
+38 KB, and Windows already has the browser engine — shipping a second copy of
+Chromium to run it would add ~150 MB for nothing. See
+[docs/desktop.md](docs/desktop.md) for single-instance handling, crash
+reporting, the capability probe, and what is deliberately not done (the binary
+is unsigned).
+
 ### Docker
 
 ```bash
@@ -358,6 +377,7 @@ guards quality needs guarding too.
 | [Architecture](docs/architecture.md) | The decisions where an alternative was seriously considered and rejected, with the reason |
 | [Privacy & data handling](SAFETY.md) · [日本語](SAFETY.ja.md) | What touches audio, what is retained, third-party exposure, APPI |
 | [Benchmarks](BENCHMARK.md) | How performance is measured, and the numbers |
+| [Desktop application](docs/desktop.md) | Packaging, the .exe, and desktop-specific failure modes |
 | [Contributing](CONTRIBUTING.md) | Setup, conventions, and what reviewers look for |
 | [Third-party notices](THIRD_PARTY_NOTICES.md) | Dependencies and prior art |
 
