@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import sys
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -815,7 +816,24 @@ def _record_spend(services: Services, session: StreamingSession) -> None:
 
 
 def _web_root() -> Path:
-    """Where the built web client lives, relative to the installed package."""
+    """Where the built web client lives.
+
+    In a checkout that is ``<repo>/web``, four levels up from this module. In a
+    PyInstaller bundle there is no repository: modules report a ``__file__``
+    inside the extraction directory, so ``parents[3]`` walks one level *past*
+    it and lands on the application folder, where nothing was ever installed.
+    The bundle puts the client at ``<_MEIPASS>/web``.
+
+    This shipped broken, and the reason is worth recording: the failure is
+    invisible from every endpoint the packaging check exercised. ``/health``,
+    ``/v1/*`` and the websocket all worked perfectly in the frozen build — the
+    only symptom was that the desktop window contained the "build the client"
+    placeholder instead of the application. Verifying a server by asking it
+    whether it is alive does not verify that it serves the product.
+    """
+    bundle = getattr(sys, "_MEIPASS", None)
+    if bundle is not None:
+        return Path(bundle) / "web"
     return Path(__file__).resolve().parents[3] / "web"
 
 

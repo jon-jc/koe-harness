@@ -382,7 +382,11 @@ class App {
    * worth seeing.
    */
   private async startDemo(): Promise<void> {
-    if (this.store.get().status === "live") return;
+    // "connecting" counts as busy. Guarding only on "live" left a window
+    // between the click and the socket opening in which a second click
+    // started a second session.
+    const status = this.store.get().status;
+    if (status === "live" || status === "connecting") return;
     this.demoMode = true;
     this.store.set({
       status: "connecting",
@@ -416,13 +420,30 @@ class App {
     }, 250);
   }
 
-  /** Build a client bound to this app's handlers. */
+  /**
+   * Build a client bound to this app's handlers.
+   *
+   * Closes any previous socket first. Without that, a second session could be
+   * opened while the first was still delivering, both would push finals into
+   * the same store, and the transcript came out with every line twice — which
+   * is exactly what happened when the demo button was pressed twice before the
+   * first connection had finished opening.
+   */
   private connect(): StreamClient {
+    this.client?.close();
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const client = new StreamClient(`${scheme}://${location.host}/v1/stream`, {
-      onMessage: (message) => this.onMessage(message),
-      onError: () => this.fail(this.s.cannotConnect),
+      onMessage: (message) => {
+        // A late frame from a socket we have already replaced belongs to a
+        // session the user ended; applying it would revive dead state.
+        if (this.client !== client) return;
+        this.onMessage(message);
+      },
+      onError: () => {
+        if (this.client === client) this.fail(this.s.cannotConnect);
+      },
       onClose: () => {
+        if (this.client !== client) return;
         if (this.store.get().status === "live") this.store.set({ status: "stopped" });
       },
     });

@@ -3,12 +3,20 @@
 ; Compiled by packaging/build.py --installer. Produces
 ; dist/koe-setup-<version>.exe.
 ;
-; Two choices worth stating:
+; Three choices worth stating:
 ;
-;   * **Per-user install by default** (PrivilegesRequired=lowest). koe needs no
-;     machine-wide component, and a per-user install avoids the UAC prompt that
-;     makes people abandon an install of a tool they were merely curious about.
-;     It also means the app can update itself later without elevation.
+;   * **Per-user install, and no question about it** (PrivilegesRequired=lowest).
+;     koe needs no machine-wide component, so a per-user install avoids the UAC
+;     prompt that makes people abandon an install of a tool they were merely
+;     curious about, and lets the app update itself later without elevation.
+;     The "install for me / for all users" chooser is deliberately *not*
+;     offered: it is the first thing a user sees, it asks a question they have
+;     no basis to answer, and both answers lead to the same working app.
+;
+;   * **The wizard language follows Windows.** ShowLanguageDialog=auto picks
+;     Japanese on a Japanese system and English on an English one, and only
+;     asks when it is neither. A language prompt before the installer has said
+;     anything is a dialog spent on a question the OS already answered.
 ;
 ;   * **The WebView2 runtime is checked, not bundled.** It ships with Windows 11
 ;     and with updated Windows 10, so bundling the installer would add weight
@@ -32,9 +40,8 @@ AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
 VersionInfoVersion={#AppVersion}
 
-; Per-user: no elevation, no UAC prompt.
+; Per-user: no elevation, no UAC prompt, and no chooser dialog.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -56,6 +63,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 LicenseFile=..\LICENSE
 MinVersion=10.0
+
+; Follow the OS; ask only when it is neither Japanese nor English.
+ShowLanguageDialog=auto
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -91,16 +101,22 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postin
 ; destroy a user's meeting records.
 Type: filesandordirs; Name: "{localappdata}\koe\logs"
 Type: filesandordirs; Name: "{localappdata}\koe\webview"
+; The single-instance lock names a pid that will not exist after uninstall.
+; Harmless if left — the app clears a stale one — but leaving a file behind
+; that only we understand is not a clean uninstall.
+Type: files; Name: "{localappdata}\koe\koe.lock"
 
 [Code]
 function WebView2Installed: Boolean;
 var
   Version: String;
 begin
-  // The runtime registers under either hive depending on per-machine or
-  // per-user install, so both are checked.
+  // The runtime registers under a different key depending on per-machine
+  // versus per-user install and on registry redirection, so all three are
+  // checked before falling back to looking for Edge itself.
   Result :=
     RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) or
+    RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) or
     RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) or
     FileExists(ExpandConstant('{pf32}\Microsoft\Edge\Application\msedge.exe')) or
     FileExists(ExpandConstant('{pf}\Microsoft\Edge\Application\msedge.exe'));

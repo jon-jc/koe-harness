@@ -310,22 +310,47 @@ while the tail the model has not settled on is greyed.
 
 ### Desktop application
 
+Download `koe-setup-<version>.exe` from
+[Releases](https://github.com/jon-jc/koe-harness/releases) and run it. The
+install is per-user: no administrator rights, no UAC prompt.
+
+> **Windows will warn you before it runs.** The installer is not code-signed —
+> a certificate is a recurring cost this project does not carry — so SmartScreen
+> shows *"Windows protected your PC"* and hides the Run button behind
+> **More info → Run anyway**. That warning means *"we have not seen this file
+> before"*, not *"this file is harmful"*; every unsigned binary from a small
+> project gets it. Downloading the same file enough times is what eventually
+> clears it, which is no help to the first person.
+>
+> Check what you downloaded before you click through, and compare it against
+> `SHA256SUMS.txt` on the release:
+>
+> ```powershell
+> Get-FileHash .\koe-setup-0.1.0.exe -Algorithm SHA256
+> ```
+
+**Prefer not to click through a security warning?** Then don't — there is no
+installer in this path:
+
 ```bash
 pip install -e ".[api,cli,ja,desktop]"
-python -m koe.desktop            # or: koe-desktop
+koe-desktop                      # or: python -m koe.desktop
 ```
 
-A native window over the same API the server deployment runs — nothing is
-stubbed for desktop, so the two builds cannot drift apart. Build an installer
-with `python packaging/build.py --installer`: a 47 MB `koe-setup-<version>.exe`
-that installs per-user with no UAC prompt.
+Either way it is a native window over the same API the server deployment runs —
+nothing is stubbed for desktop, so the two builds cannot drift apart. To build
+the installer yourself: `python packaging/build.py --installer` produces a 47 MB
+`koe-setup-<version>.exe` and the matching SHA-256.
+
+Requires Windows 10/11 x64 and the Edge WebView2 runtime, which ships with
+Windows 11 and updated Windows 10. The installer checks for it and says where to
+get it rather than leaving you with a blank window.
 
 pywebview over WebView2 rather than Electron: the client already exists and is
-38 KB, and Windows already has the browser engine — shipping a second copy of
-Chromium to run it would add ~150 MB for nothing. See
+14 KB gzipped, and Windows already has the browser engine — shipping a second
+copy of Chromium to run it would add ~150 MB for nothing. See
 [docs/desktop.md](docs/desktop.md) for single-instance handling, crash
-reporting, the capability probe, and what is deliberately not done (the binary
-is unsigned).
+reporting, and the capability probe.
 
 ### Docker
 
