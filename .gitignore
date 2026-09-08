@@ -61,3 +61,8 @@ models/
 *.wav.tmp
 terraform.tfstate*
 .terraform/
+
+# --- Node ---
+node_modules/
+web/node_modules/
+*.tsbuildinfo

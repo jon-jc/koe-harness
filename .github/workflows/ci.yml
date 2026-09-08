@@ -85,3 +85,26 @@ jobs:
           name: coverage
           path: coverage.xml
           if-no-files-found: ignore
+
+  web:
+    name: web client (typecheck & build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      - name: Fail if the committed bundle is stale
+        # dist/app.js is committed so `koe serve` works without a Node
+        # toolchain. That only holds if it matches the sources.
+        run: git diff --exit-code -- dist/app.js || (echo "::error::web/dist/app.js is out of date; run npm run build and commit it" && exit 1)
