@@ -21,7 +21,9 @@ import asyncio
 import contextlib
 import logging
 import time
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from koe import __version__
+from koe.api.middleware import RequestContextMiddleware
+from koe.config import Settings, get_settings
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Segment, Transcript, attribute_speakers
 from koe.kernel.context import Context
@@ -41,13 +45,12 @@ from koe.pipeline.session import SessionConfig, StreamingSession
 from koe.providers.mock import MEETING_JA, MockASR, MockDiarization, MockLLM
 from koe.routing.budget import Budget, Priority
 from koe.routing.router import Router
+from koe.telemetry.ledger import BudgetExceeded, CostLedger
+from koe.telemetry.metrics import METRICS, Metrics, configure_logging
 from koe.text.script import Language
 from koe.text.tokenize import mecab_available
 
 logger = logging.getLogger(__name__)
-
-MAX_FRAME_BYTES = 1 << 20  # 1 MiB; a 20ms frame is 640 bytes
-MAX_SESSION_SECONDS = 60 * 60 * 4
 
 
 # --------------------------------------------------------------------------
@@ -68,10 +71,58 @@ class Services:
     asr_router: Router[Any]
     llm: Any
     diarizer: Any
+    settings: Settings = field(default_factory=get_settings)
+    ledger: CostLedger = field(default_factory=CostLedger)
+    metrics: Metrics = field(default_factory=lambda: METRICS)
+    #: Bounds concurrent streaming sessions. Each holds an audio buffer and a
+    #: decoder, so without a cap the failure mode under load is memory
+    #: exhaustion rather than a clean rejection.
+    _sessions: asyncio.Semaphore = field(init=False, repr=False)
+    #: Set whenever no session is active. Shutdown waits on this rather than
+    #: polling, so a drain finishes the instant the last caller hangs up
+    #: instead of on the next poll tick.
+    _idle: asyncio.Event = field(init=False, repr=False)
+    active_sessions: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self._sessions = asyncio.Semaphore(self.settings.max_concurrent_sessions)
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    @contextlib.asynccontextmanager
+    async def session_slot(self) -> AsyncIterator[bool]:
+        """Reserve a session slot, or yield False if the server is full.
+
+        Rejecting immediately is kinder than queueing: a caller waiting behind
+        a full server records audio nobody is transcribing, and would rather be
+        told now.
+        """
+        if self._sessions.locked():
+            yield False
+            return
+        await self._sessions.acquire()
+        self.active_sessions += 1
+        self._idle.clear()
+        try:
+            yield True
+        finally:
+            self.active_sessions -= 1
+            self._sessions.release()
+            if self.active_sessions == 0:
+                self._idle.set()
+
+    async def wait_until_idle(self) -> None:
+        """Block until no session is active.
+
+        Deliberately has no timeout parameter: bounding the wait is the
+        caller's decision, expressed with ``asyncio.timeout`` at the call site.
+        """
+        await self._idle.wait()
 
     @classmethod
-    def default(cls) -> Services:
+    def default(cls, settings: Settings | None = None) -> Services:
         """Mock-backed services, so the server runs on a clean checkout."""
+        resolved = settings or get_settings()
         ctx = Context(name="api")
         fast = MockASR(
             name="mock-fast", degradation=0.10, latency_ms=0.0, cost_per_audio_minute_usd=0.002
@@ -86,6 +137,11 @@ class Services:
             asr_router=router,
             llm=MockLLM(default_response=Minutes().model_dump_json()),
             diarizer=MockDiarization(script=MEETING_JA),
+            settings=resolved,
+            ledger=CostLedger(
+                session_limit_usd=resolved.session_budget_usd,
+                tenant_limit_usd=resolved.tenant_budget_usd,
+            ),
         )
 
 
@@ -97,8 +153,11 @@ class Services:
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = __version__
+    environment: str = "local"
     japanese_tokenizer: str
     providers: list[dict[str, object]]
+    active_sessions: int = 0
+    max_sessions: int = 0
 
 
 class TranscribeRequest(BaseModel):
@@ -147,9 +206,61 @@ def build_router(services: Services) -> APIRouter:
 
     @router.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
+        """Liveness. Cheap and dependency-free, so it answers under load."""
         return HealthResponse(
+            environment=services.settings.environment,
             japanese_tokenizer="mecab" if mecab_available() else "character",
             providers=services.asr_router.health(),
+            active_sessions=services.active_sessions,
+            max_sessions=services.settings.max_concurrent_sessions,
+        )
+
+    @router.get("/ready")
+    async def ready() -> JSONResponse:
+        """Readiness. Distinct from liveness on purpose.
+
+        A saturated server is alive but should stop receiving new sessions, so
+        a load balancer needs to be able to ask a different question than a
+        restart supervisor does.
+        """
+        at_capacity = services.active_sessions >= services.settings.max_concurrent_sessions
+        healthy_providers = [b for b in services.asr_router.health() if b["state"] != "open"]
+        ready = bool(healthy_providers) and not at_capacity
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "ready": ready,
+                "at_capacity": at_capacity,
+                "healthy_providers": len(healthy_providers),
+            },
+        )
+
+    @router.get("/metrics")
+    async def metrics() -> JSONResponse:
+        """Metrics snapshot, plus the cost breakdown.
+
+        Cost sits alongside latency rather than in a separate dashboard,
+        because on a multi-model pipeline they are the same decision.
+        """
+        total = services.ledger.total
+        return JSONResponse(
+            {
+                **services.metrics.snapshot(),
+                "cost": {
+                    "total_usd": round(total.cost_usd, 6),
+                    "audio_seconds": round(total.audio_seconds, 1),
+                    "cost_per_audio_hour": round(total.cost_per_audio_hour, 6),
+                    "calls": total.calls,
+                    "by_model": {
+                        name: {
+                            "calls": t.calls,
+                            "cost_usd": round(t.cost_usd, 6),
+                            "cost_per_audio_hour": round(t.cost_per_audio_hour, 6),
+                        }
+                        for name, t in services.ledger.by_model().items()
+                    },
+                },
+            }
         )
 
     @router.get("/v1/providers")
@@ -232,7 +343,25 @@ def build_router(services: Services) -> APIRouter:
 
 async def _stream_endpoint(websocket: WebSocket, services: Services) -> None:
     """Drive one realtime session over a socket."""
+    async with services.session_slot() as admitted:
+        if not admitted:
+            # 1013 "try again later" — the close code a client can retry on,
+            # unlike a generic failure which looks like a bug to the caller.
+            await websocket.accept()
+            await websocket.send_json(
+                {"type": "error", "message": "server at capacity, retry shortly"}
+            )
+            await websocket.close(code=1013)
+            services.metrics.increment("ws.rejected_at_capacity")
+            return
+        await _run_session(websocket, services)
+
+
+async def _run_session(websocket: WebSocket, services: Services) -> None:
+    """One admitted realtime session."""
+    settings = services.settings
     await websocket.accept()
+    services.metrics.increment("ws.sessions")
 
     # Session-scoped context: everything registered here dies with the socket,
     # including when the browser tab vanishes mid-utterance.
@@ -240,6 +369,7 @@ async def _stream_endpoint(websocket: WebSocket, services: Services) -> None:
     ctx = services.ctx._derive(scope=scope)
 
     session: StreamingSession | None = None
+    session_started = time.monotonic()
     outbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
 
     def enqueue(payload: dict[str, Any]) -> None:
@@ -350,6 +480,7 @@ async def _stream_endpoint(websocket: WebSocket, services: Services) -> None:
                                 ],
                             }
                         )
+                        _record_spend(services, session)
                         session = None
                     break
                 continue
@@ -358,13 +489,28 @@ async def _stream_endpoint(websocket: WebSocket, services: Services) -> None:
                 if session is None:
                     enqueue({"type": "error", "message": "send a start frame first"})
                     continue
-                if len(payload) > MAX_FRAME_BYTES:
+                if len(payload) > settings.max_frame_bytes:
                     enqueue({"type": "error", "message": "audio frame too large"})
                     continue
-                if session.duration > MAX_SESSION_SECONDS:
+                if session.duration > settings.max_session_seconds:
                     enqueue({"type": "error", "message": "session length limit reached"})
                     break
-                await session.push_audio(payload)
+
+                # Reject audio arriving faster than realtime by a wide margin.
+                # A client streaming a file at speed is not a live caller, and
+                # letting it run monopolises a worker and the cost budget.
+                elapsed = max(time.monotonic() - session_started, 1e-6)
+                if session.duration > elapsed * settings.max_realtime_factor + 5.0:
+                    enqueue({"type": "error", "message": "audio is arriving faster than realtime"})
+                    services.metrics.increment("ws.rate_limited")
+                    break
+
+                try:
+                    await session.push_audio(payload)
+                except BudgetExceeded as exc:
+                    logger.warning("session budget exceeded: %s", exc)
+                    enqueue({"type": "error", "message": "session cost limit reached"})
+                    break
 
     except WebSocketDisconnect:
         logger.info("client disconnected")
@@ -379,9 +525,25 @@ async def _stream_endpoint(websocket: WebSocket, services: Services) -> None:
         if session is not None:
             with contextlib.suppress(Exception):
                 await session.finish()
-        scope.dispose()
+            # Audio processed before a disconnect was still paid for. A ledger
+            # that only records clean shutdowns under-reports exactly the
+            # sessions that went wrong.
+            _record_spend(services, session)
+        with contextlib.suppress(Exception):
+            scope.dispose()
         with contextlib.suppress(Exception):
             await websocket.close()
+
+
+def _record_spend(services: Services, session: StreamingSession) -> None:
+    """Book a finished session's provider spend."""
+    if session.usage.cost_usd <= 0 and session.usage.audio_seconds <= 0:
+        return
+    with contextlib.suppress(BudgetExceeded):
+        # The limit was already enforced during the session; recording here
+        # must not raise on the teardown path.
+        services.ledger.record(session.usage, session_id=session.session_id, modality="asr")
+    services.metrics.observe("session.duration_s", session.duration)
 
 
 # --------------------------------------------------------------------------
@@ -397,18 +559,73 @@ def _web_root() -> Path:
 def create_app(services: Services | None = None) -> FastAPI:
     """Build the ASGI application."""
     resolved = services or Services.default()
+    settings = resolved.settings
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        configure_logging(settings.log_level, structured=settings.structured_logs)
+
+        # Refuse to start a misconfigured production process. Failing at boot
+        # is far cheaper than discovering a wildcard CORS policy or an
+        # unbounded budget from its consequences.
+        problems = settings.validate_for_environment()
+        if problems:
+            for problem in problems:
+                logger.error("invalid configuration: %s", problem)
+            raise RuntimeError(
+                f"refusing to start in {settings.environment}: " + "; ".join(problems)
+            )
+
+        logger.info(
+            "koe starting",
+            extra={
+                "version": __version__,
+                "environment": settings.environment,
+                "mocks": settings.use_mocks,
+                "max_sessions": settings.max_concurrent_sessions,
+                "japanese_tokenizer": "mecab" if mecab_available() else "character",
+            },
+        )
+        try:
+            yield
+        finally:
+            # Drain in-flight sessions before the process exits, so a deploy
+            # does not cut a caller off mid-utterance.
+            drained = True
+            try:
+                async with asyncio.timeout(10.0):
+                    await resolved.wait_until_idle()
+            except TimeoutError:
+                drained = False
+            if not drained:
+                logger.warning(
+                    "shutting down with %d session(s) still active",
+                    resolved.active_sessions,
+                )
+            total = resolved.ledger.total
+            logger.info(
+                "koe stopped",
+                extra={
+                    "total_cost_usd": round(total.cost_usd, 6),
+                    "audio_seconds": round(total.audio_seconds, 1),
+                    "calls": total.calls,
+                },
+            )
 
     app = FastAPI(
         title="koe",
         version=__version__,
         description="声 — bilingual JA/EN voice AI harness",
+        lifespan=lifespan,
     )
     app.state.services = resolved
+    app.add_middleware(RequestContextMiddleware, metrics=resolved.metrics)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=settings.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Request-ID"],
     )
     app.include_router(build_router(resolved))
 

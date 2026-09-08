@@ -61,6 +61,8 @@ models/
 *.wav.tmp
 terraform.tfstate*
 .terraform/
+.terraform.lock.hcl
+deploy/terraform/terraform.tfvars
 
 # --- Node ---
 node_modules/

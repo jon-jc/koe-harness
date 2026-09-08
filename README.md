@@ -121,7 +121,7 @@ Built in milestones, each merged via its own PR.
 - [x] **M7 — Realtime pipeline & serving.** VAD with adaptive noise floor, language-tuned endpointing, LocalAgreement stabilization, FastAPI + WebSocket, TypeScript AudioWorklet client.
 - [x] **M6 — LLM layer.** 議事録 generation, citation-based hallucination detection, targeted repair, Claude + GPT adapters with cache-aware cost accounting.
 
-- [ ] **M9 — Operations.** Cost ledger, metrics, Docker, Terraform.
+- [x] **M8 — Operations.** Cost ledger with budget enforcement, EMF metrics, structured logs, capacity limits, graceful drain, Docker, Terraform (ECS Fargate).
 
 ---
 

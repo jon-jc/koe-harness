@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in.
+environment = "staging"
+region      = "ap-northeast-1"
+
+# Immutable: the git sha CI built. Never "latest" — a rollback has to be able
+# to name the exact image it is rolling back to.
+image_tag = "sha-a1b2c3d"
+
+vpc_id             = "vpc-xxxxxxxx"
+public_subnet_ids  = ["subnet-aaaa", "subnet-bbbb"]
+private_subnet_ids = ["subnet-cccc", "subnet-dddd"]
+certificate_arn    = "arn:aws:acm:ap-northeast-1:123456789012:certificate/xxxx"
+
+cors_origins = ["https://koe.example.com"]
+
+max_sessions_per_task = 32
+session_budget_usd    = 5.0
