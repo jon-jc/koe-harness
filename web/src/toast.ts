@@ -33,10 +33,30 @@ export class Notifications {
   }
 
   private createHost(): HTMLElement {
-    const existing = document.querySelector<HTMLElement>(".toasts");
+    const existing = document.querySelector<HTMLElement>("body > .toasts");
     if (existing) return existing;
     const node = h("div", { class: "toasts" });
     document.body.append(node);
+    return node;
+  }
+
+  /**
+   * Where this notification should go.
+   *
+   * A modal `<dialog>` renders in the **top layer**, which sits above every
+   * z-index on the page — so a toast in the body-level host would be painted
+   * behind the very form it is reporting on. Position is inherited from a
+   * descendant of the dialog, so hosting it there puts it back in front.
+   * Closing the dialog takes its notifications with it, which is right: they
+   * were about the dialog.
+   */
+  private hostFor(): HTMLElement {
+    const dialog = document.querySelector<HTMLElement>("dialog[open]");
+    if (!dialog) return this.host;
+    const existing = dialog.querySelector<HTMLElement>(":scope > .toasts");
+    if (existing) return existing;
+    const node = h("div", { class: "toasts" });
+    dialog.append(node);
     return node;
   }
 
@@ -53,7 +73,7 @@ export class Notifications {
     close.addEventListener("click", () => toast.remove());
     toast.append(close);
 
-    this.host.append(toast);
+    this.hostFor().append(toast);
 
     // Errors are announced assertively; routine confirmations should not
     // interrupt whatever a screen reader is currently saying.
@@ -77,6 +97,6 @@ export class Notifications {
   }
 
   clear(): void {
-    this.host.replaceChildren();
+    for (const host of document.querySelectorAll(".toasts")) host.replaceChildren();
   }
 }
