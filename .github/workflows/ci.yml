@@ -26,7 +26,9 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install
-        run: pip install -e ".[dev]"
+        # cli + ja so mypy type-checks against the real dependencies rather
+        # than reporting typer's decorators as untyped.
+        run: pip install -e ".[dev,cli,ja]"
       - name: Ruff (lint)
         run: ruff check src tests
       - name: Ruff (format check)
@@ -61,7 +63,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install
-        run: pip install -e ".[${{ matrix.extras }}]"
+        run: pip install -e ".[${{ matrix.extras }},cli]"
       - name: Report Japanese backend
         run: python -c "from koe.text import mecab_available; print('mecab_available:', mecab_available())"
       - name: Test
@@ -74,7 +76,6 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          pip install 'typer>=0.12' 'rich>=13.7'
           python -m koe.cli.main evaluate --degradation 0.0 --system clean
           python -m koe.cli.main compare --baseline 0.0 --candidate 0.15
       - name: Upload coverage
