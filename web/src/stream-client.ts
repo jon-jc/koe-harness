@@ -1,0 +1,131 @@
+/**
+ * WebSocket client for the koe realtime protocol.
+ *
+ * Control frames are JSON, audio frames are binary. The split matters on the
+ * audio path: base64-ing PCM into JSON inflates every frame by a third, on the
+ * one channel where traffic is continuous rather than occasional.
+ *
+ * The client drops audio when the socket's send buffer backs up rather than
+ * queueing it. Queueing feels safer and is worse: the queue grows without
+ * bound on a slow link, and the audio that eventually drains is minutes stale,
+ * so the user watches captions for speech they have long since finished.
+ * Dropping keeps the stream anchored to now.
+ */
+
+export type ServerMessage =
+  | { type: 'started'; session_id: string; provider: string; language: string }
+  | { type: 'speech'; state: 'start' | 'end'; at: number }
+  | { type: 'partial'; committed: string; pending: string; language: string }
+  | { type: 'final'; text: string; start: number; end: number; language: string; speaker: string }
+  | {
+      type: 'transcript';
+      text: string;
+      duration: number;
+      cost_usd: number;
+      segments: Array<{ text: string; start: number; end: number; speaker: string }>;
+    }
+  | { type: 'error'; message: string };
+
+export interface StreamHandlers {
+  onMessage: (message: ServerMessage) => void;
+  onOpen?: () => void;
+  onClose?: (event: CloseEvent) => void;
+  onError?: (error: string) => void;
+}
+
+export interface StartOptions {
+  language: 'ja' | 'en' | 'unknown';
+  partialIntervalMs?: number;
+}
+
+/** Above this many buffered bytes, new frames are dropped rather than queued. */
+const BACKPRESSURE_BYTES = 512 * 1024;
+
+export class StreamClient {
+  private socket: WebSocket | null = null;
+  private dropped = 0;
+  private sent = 0;
+
+  constructor(
+    private readonly url: string,
+    private readonly handlers: StreamHandlers,
+  ) {}
+
+  get connected(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+
+  /** Frames discarded to back-pressure — surfaced so degradation is visible. */
+  get droppedFrames(): number {
+    return this.dropped;
+  }
+
+  get sentFrames(): number {
+    return this.sent;
+  }
+
+  connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(this.url);
+      socket.binaryType = 'arraybuffer';
+      this.socket = socket;
+
+      socket.onopen = () => {
+        this.handlers.onOpen?.();
+        resolve();
+      };
+
+      socket.onmessage = (event: MessageEvent) => {
+        if (typeof event.data !== 'string') return;
+        try {
+          this.handlers.onMessage(JSON.parse(event.data) as ServerMessage);
+        } catch {
+          this.handlers.onError?.('received a malformed frame from the server');
+        }
+      };
+
+      socket.onerror = () => {
+        this.handlers.onError?.('connection failed');
+        reject(new Error('websocket error'));
+      };
+
+      socket.onclose = (event: CloseEvent) => {
+        this.socket = null;
+        this.handlers.onClose?.(event);
+      };
+    });
+  }
+
+  start(options: StartOptions): void {
+    this.send({
+      type: 'start',
+      language: options.language,
+      partial_interval_ms: options.partialIntervalMs ?? 500,
+    });
+  }
+
+  /** Send one PCM16 frame, dropping it if the socket is already backed up. */
+  sendAudio(frame: ArrayBuffer): void {
+    if (!this.connected || !this.socket) return;
+    if (this.socket.bufferedAmount > BACKPRESSURE_BYTES) {
+      this.dropped += 1;
+      return;
+    }
+    this.socket.send(frame);
+    this.sent += 1;
+  }
+
+  stop(): void {
+    this.send({ type: 'stop' });
+  }
+
+  close(): void {
+    this.socket?.close();
+    this.socket = null;
+  }
+
+  private send(payload: Record<string, unknown>): void {
+    if (!this.connected || !this.socket) return;
+    this.socket.send(JSON.stringify(payload));
+  }
+}

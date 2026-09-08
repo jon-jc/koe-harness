@@ -1,0 +1,16 @@
+{
+  "name": "koe-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Realtime voice client for the koe harness",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --format=iife --target=es2020 --minify --sourcemap --outfile=dist/app.js",
+    "dev": "esbuild src/main.ts --bundle --format=iife --target=es2020 --sourcemap --watch --outfile=dist/app.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -118,9 +118,9 @@ Built in milestones, each merged via its own PR.
 - [x] **M3 — Domain & providers.** Typed audio/transcript models, ASR×diarization fusion with word-level speaker attribution, provider protocols carrying cost/latency/quality metadata, deterministic mocks.
 - [x] **M4 — Evaluation.** CER/WER/DER with optimal speaker mapping, bootstrap CIs, paired permutation tests, slice-level reporting, significance-aware regression gates, `koe` CLI.
 - [x] **M5 — Routing.** Per-request latency/cost/quality budgets, hard-constraint filtering, weighted ranking, circuit breakers, fallback chains, eval feedback loop.
-- [ ] **M6 — Realtime pipeline.** VAD, endpointing, partial stabilization, ASR×diarization fusion.
+- [x] **M7 — Realtime pipeline & serving.** VAD with adaptive noise floor, language-tuned endpointing, LocalAgreement stabilization, FastAPI + WebSocket, TypeScript AudioWorklet client.
 - [x] **M6 — LLM layer.** 議事録 generation, citation-based hallucination detection, targeted repair, Claude + GPT adapters with cache-aware cost accounting.
-- [ ] **M8 — Serving.** FastAPI + WebSocket, TypeScript voice client.
+
 - [ ] **M9 — Operations.** Cost ledger, metrics, Docker, Terraform.
 
 ---
