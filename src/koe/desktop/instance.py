@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 from types import TracebackType
 
@@ -33,16 +34,29 @@ class AlreadyRunning(RuntimeError):
         super().__init__(f"koe is already running (pid {pid})")
 
 
+#: Beyond this, a value is not a PID any operating system will admit to. The
+#: platform calls below reject it by raising rather than returning false, so
+#: it has to be filtered before it reaches them.
+MAX_PID = 2**31 - 1
+
+
 def _process_alive(pid: int) -> bool:
     """Whether `pid` names a live process.
 
     A PID can be recycled, so this can theoretically report a stale lock as
     live. The failure mode is a spurious "already running" message rather than
     two instances corrupting each other's state, which is the right way round.
+
+    The lock file is untrusted input — it can be truncated, hand-edited, or
+    left by a different build — so an out-of-range value is treated as "not
+    running" rather than passed to a platform call that would raise.
     """
-    if pid <= 0:
+    if pid <= 0 or pid > MAX_PID:
         return False
-    if os.name == "nt":
+    # `sys.platform` rather than `os.name`: the type checker narrows on the
+    # former and skips this branch entirely off-Windows. With `os.name` it
+    # walks in and reports ctypes.windll as missing on Linux and macOS.
+    if sys.platform == "win32":
         import ctypes
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -63,6 +77,9 @@ def _process_alive(pid: int) -> bool:
     except PermissionError:
         # Exists, owned by someone else.
         return True
+    except (OverflowError, ValueError):
+        # Out of range for this platform's pid_t.
+        return False
     return True
 
 
@@ -99,10 +116,12 @@ class InstanceLock:
         self._held = True
 
     def _read_pid(self) -> int | None:
+        """Read the recorded PID, or None if the file is missing or nonsense."""
         try:
-            return int(self.path.read_text(encoding="utf-8").strip())
+            pid = int(self.path.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             return None
+        return pid if 0 < pid <= MAX_PID else None
 
     def release(self) -> None:
         """Release the lock, if this process still owns it."""

@@ -31,8 +31,13 @@ jobs:
         run: ruff check src tests
       - name: Ruff (format check)
         run: ruff format --check src tests
-      - name: Mypy (strict)
+      - name: Mypy (strict, linux)
         run: mypy
+      - name: Mypy (strict, windows)
+        # The desktop package has Windows-only branches. mypy narrows on
+        # sys.platform, so those are skipped on the runner's own platform and
+        # would never be checked at all without a second pass.
+        run: mypy --platform win32
 
   test:
     # Japanese tokenization is an optional dependency, so the suite runs both

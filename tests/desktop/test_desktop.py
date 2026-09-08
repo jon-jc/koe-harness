@@ -187,10 +187,21 @@ def test_release_does_not_remove_someone_elses_lock(tmp_path: Path) -> None:
     assert path.exists()
 
 
-def test_this_process_is_alive() -> None:
+def test_process_liveness() -> None:
     assert _process_alive(os.getpid())
-    assert not _process_alive(4_294_967_290)
     assert not _process_alive(0)
+    assert not _process_alive(-1)
+
+
+def test_an_out_of_range_pid_is_not_alive() -> None:
+    """A lock file is untrusted input.
+
+    On Linux os.kill raises OverflowError rather than returning false for a
+    value beyond pid_t, so a corrupt lock would crash the app at startup
+    instead of being treated as stale.
+    """
+    assert not _process_alive(4_294_967_290)
+    assert not _process_alive(2**63)
 
 
 # --------------------------------------------------------------------------
