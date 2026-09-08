@@ -2,170 +2,124 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>koe — 声</title>
-    <style>
-      :root {
-        --bg: #0f1115;
-        --panel: #171a21;
-        --border: #262b36;
-        --text: #e6e9ef;
-        --muted: #8b93a7;
-        --accent: #5aa9e6;
-        --accent-strong: #7cc4f5;
-        --danger: #e0574a;
-        --ok: #56c271;
-      }
-      @media (prefers-color-scheme: light) {
-        :root {
-          --bg: #f7f8fa;
-          --panel: #ffffff;
-          --border: #e2e5ea;
-          --text: #1a1d23;
-          --muted: #6b7280;
-          --accent: #1d6fb8;
-          --accent-strong: #155a99;
-        }
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo,
-          -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        line-height: 1.7;
-      }
-      .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 64px; }
-      header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-      h1 { font-size: 26px; margin: 0; letter-spacing: -0.01em; }
-      .sub { color: var(--muted); font-size: 14px; }
-      .lede { color: var(--muted); font-size: 14px; margin: 8px 0 24px; }
-      .panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 18px;
-        margin-bottom: 18px;
-      }
-      .controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-      button {
-        background: var(--accent);
-        color: #fff;
-        border: 0;
-        border-radius: 8px;
-        padding: 10px 22px;
-        font-size: 15px;
-        font-weight: 600;
-        cursor: pointer;
-        font-family: inherit;
-      }
-      button:hover { background: var(--accent-strong); }
-      button.recording { background: var(--danger); }
-      select {
-        background: var(--bg);
-        color: var(--text);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 9px 12px;
-        font-size: 14px;
-        font-family: inherit;
-      }
-      .meter {
-        flex: 1;
-        min-width: 120px;
-        height: 8px;
-        background: var(--border);
-        border-radius: 4px;
-        overflow: hidden;
-      }
-      #meter-fill {
-        height: 100%;
-        width: 0%;
-        background: var(--ok);
-        transition: width 80ms linear;
-      }
-      .meta {
-        display: flex;
-        gap: 18px;
-        flex-wrap: wrap;
-        margin-top: 14px;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .badge {
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        padding: 2px 10px;
-        font-size: 12px;
-      }
-      .badge.active { border-color: var(--ok); color: var(--ok); }
-      #transcript { min-height: 260px; max-height: 460px; overflow-y: auto; }
-      .empty { color: var(--muted); font-size: 14px; }
-      .line { margin: 0 0 10px; display: flex; gap: 10px; align-items: baseline; }
-      .speaker {
-        flex: 0 0 auto;
-        color: var(--accent);
-        font-weight: 600;
-        font-size: 13px;
-        min-width: 56px;
-      }
-      .line .text { flex: 1; }
-      .time { color: var(--muted); font-size: 11px; flex: 0 0 auto; }
-      .interim .text { color: var(--muted); }
-      /* The tail the model has not settled on yet. Styling it apart is what
-         stops the line from appearing to rewrite itself as it churns. */
-      .pending { color: var(--muted); opacity: 0.55; font-style: italic; }
-      footer { color: var(--muted); font-size: 12px; margin-top: 28px; }
-      code {
-        background: var(--border);
-        padding: 1px 6px;
-        border-radius: 4px;
-        font-size: 12px;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="koe — bilingual Japanese/English voice AI harness: streaming ASR, speaker diarization, and verified 議事録 generation."
+    />
+    <title>koe 声 — bilingual voice AI</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>声</text></svg>"
+    />
   </head>
   <body>
-    <div class="wrap">
-      <header>
-        <h1>koe</h1>
-        <span class="sub">声 — bilingual voice AI harness</span>
-      </header>
-      <p class="lede">
-        リアルタイム日本語・英語音声認識。Committed text is shown normally; the
-        tail the model has not settled on yet is greyed.
-      </p>
+    <div class="app">
+      <!-- ------------------------------------------------------- header -->
+      <header class="header">
+        <div class="brand">
+          <span class="kanji" aria-hidden="true">声</span>
+          <span>koe</span>
+          <span class="tag" id="t-tagline">日本語・英語 音声AIハーネス</span>
+        </div>
 
-      <div class="panel">
-        <div class="controls">
-          <button id="toggle">録音開始</button>
-          <select id="language">
+        <div class="spacer"></div>
+
+        <div class="meta">
+          <span class="sr-only" id="t-ui-lang">表示言語</span>
+          <select class="select" id="ui-lang" aria-labelledby="t-ui-lang">
+            <option value="ja">日本語</option>
+            <option value="en">English</option>
+          </select>
+          <button class="icon-btn" id="theme" type="button" aria-label="テーマ切替">◑</button>
+        </div>
+      </header>
+
+      <!-- -------------------------------------------------------- stage -->
+      <div class="stage">
+        <button class="btn" id="toggle" type="button" aria-pressed="false">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="toggle-label">録音開始</span>
+        </button>
+
+        <button class="btn ghost" id="demo" type="button" title="">
+          <span id="demo-label">デモ再生</span>
+        </button>
+
+        <label class="meta" style="gap: 6px">
+          <span id="t-asr-lang">認識言語</span>
+          <select class="select" id="asr-lang">
             <option value="ja" selected>日本語</option>
             <option value="en">English</option>
-            <option value="unknown">Auto</option>
+            <option value="unknown">自動判定</option>
           </select>
-          <div class="meter"><div id="meter-fill"></div></div>
+        </label>
+
+        <div class="level" role="meter" aria-label="input level">
+          <div class="level-fill" id="level-fill"></div>
         </div>
+
         <div class="meta">
-          <span>status: <span id="status">待機中</span></span>
-          <span>backend: <span id="provider">—</span></span>
-          <span id="speech-state" class="badge">無音</span>
+          <span class="chip" id="status-chip">待機中</span>
+          <span class="chip" id="speech-chip">無音</span>
+          <span>backend <b id="backend">—</b></span>
         </div>
+
+        <div class="spacer"></div>
+        <div class="note" id="t-hint"><kbd>Space</kbd></div>
       </div>
 
-      <div class="panel" id="transcript">
-        <p class="empty">マイクを開始すると、ここに文字起こしが表示されます。</p>
+      <!-- -------------------------------------------------------- panes -->
+      <div class="panes">
+        <!-- transcript -->
+        <section class="pane" aria-labelledby="t-transcript">
+          <div class="pane-head">
+            <span class="pane-title" id="t-transcript">文字起こし</span>
+            <div class="spacer" style="flex: 1"></div>
+            <span class="note" id="stats"></span>
+          </div>
+
+          <div class="strip-wrap">
+            <canvas class="strip" id="level-canvas" aria-hidden="true"></canvas>
+            <span class="strip-label" id="t-level">入力レベル</span>
+          </div>
+          <div class="strip-wrap">
+            <canvas
+              class="strip"
+              id="timeline-canvas"
+              style="height: 40px"
+              aria-hidden="true"
+            ></canvas>
+            <span class="strip-label" id="t-speakers">話者</span>
+          </div>
+
+          <div class="pane-body" id="transcript"></div>
+        </section>
+
+        <!-- minutes / routing / metrics -->
+        <section class="pane" aria-label="analysis">
+          <div class="tabs" id="tabs" role="tablist">
+            <button class="tab" role="tab" data-tab="minutes" id="tab-minutes" aria-selected="true">
+              議事録
+            </button>
+            <button class="tab" role="tab" data-tab="routing" id="tab-routing" aria-selected="false">
+              ルーティング
+            </button>
+            <button class="tab" role="tab" data-tab="metrics" id="tab-metrics" aria-selected="false">
+              メトリクス
+            </button>
+          </div>
+          <div class="pane-body" id="side"></div>
+        </section>
       </div>
-
-      <div class="meta"><div id="stats"></div></div>
-
-      <footer>
-        Audio is downsampled to 16&nbsp;kHz mono PCM16 in an
-        <code>AudioWorklet</code> before it leaves the browser — ~6× less uplink
-        than 48&nbsp;kHz float, and off the main thread so a UI repaint cannot
-        drop input frames.
-      </footer>
     </div>
+
+    <!-- Final utterances are announced; interim hypotheses are not, because a
+         screen reader re-reading a churning line is unusable. -->
+    <div class="sr-only" id="live-region" role="status" aria-live="polite"></div>
+
     <script src="/static/app.js"></script>
   </body>
 </html>

@@ -105,7 +105,7 @@ jobs:
       - name: Fail if the committed bundle is stale
         # dist/app.js is committed so `koe serve` works without a Node
         # toolchain. That only holds if it matches the sources.
-        run: git diff --exit-code -- dist/app.js || (echo "::error::web/dist/app.js is out of date; run npm run build and commit it" && exit 1)
+        run: git diff --exit-code -- dist/app.js dist/app.css || (echo "::error::web/dist is out of date; run npm run build and commit it" && exit 1)
 
   terraform:
     name: terraform (fmt & validate)

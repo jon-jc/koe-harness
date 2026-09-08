@@ -34,15 +34,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from koe import __version__
+from koe.api.demo import drive_demo, retime
 from koe.api.middleware import RequestContextMiddleware
 from koe.config import Settings, get_settings
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Segment, Transcript, attribute_speakers
 from koe.kernel.context import Context
+from koe.minutes.demo import demo_llm
 from koe.minutes.generator import MinutesGenerator
 from koe.minutes.schema import Minutes
 from koe.pipeline.session import SessionConfig, StreamingSession
-from koe.providers.mock import MEETING_JA, MockASR, MockDiarization, MockLLM
+from koe.providers.mock import MEETING_JA, MockASR, MockDiarization
 from koe.routing.budget import Budget, Priority
 from koe.routing.router import Router
 from koe.telemetry.ledger import BudgetExceeded, CostLedger
@@ -135,7 +137,9 @@ class Services:
         return cls(
             ctx=ctx,
             asr_router=router,
-            llm=MockLLM(default_response=Minutes().model_dump_json()),
+            # The demo LLM returns a plausible 議事録 containing one
+            # deliberately fabricated claim, so the guardrail is visible.
+            llm=demo_llm(),
             diarizer=MockDiarization(script=MEETING_JA),
             settings=resolved,
             ledger=CostLedger(
@@ -369,6 +373,8 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
     ctx = services.ctx._derive(scope=scope)
 
     session: StreamingSession | None = None
+    demo_task: asyncio.Task[None] | None = None
+    last_transcript: Transcript | None = None
     session_started = time.monotonic()
     outbound: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
 
@@ -417,6 +423,56 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
             payload = await outbound.get()
             await websocket.send_json(payload)
 
+    async def run_demo(script: Any) -> None:
+        """Play a scripted meeting, then close the session as a client would.
+
+        Nested so it can hand the finished session back to the receive loop.
+        A module-level task would leave `session` set here, and teardown would
+        then finish it a second time and book its cost twice.
+        """
+        nonlocal session, last_transcript
+        active = session
+        if active is None:
+            return
+        try:
+            await drive_demo(
+                active,
+                script,
+                on_level=lambda value: enqueue({"type": "level", "value": round(value, 3)}),
+            )
+            transcript = await active.finish()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("demo playback failed")
+            enqueue({"type": "error", "message": "demo playback failed"})
+            session = None
+            return
+
+        _record_spend(services, active)
+        last_transcript = transcript
+        session = None
+        enqueue(
+            {
+                "type": "transcript",
+                "text": transcript.text,
+                "duration": round(transcript.duration, 2),
+                "cost_usd": round(active.usage.cost_usd, 6),
+                "segments": [
+                    {
+                        "text": seg.text,
+                        "start": round(seg.start, 2),
+                        "end": round(seg.end, 2),
+                        "speaker": seg.speaker or "",
+                    }
+                    for seg in transcript.final_segments
+                ],
+            }
+        )
+        # Tell the client playback is over; it has no other way to know, since
+        # a server-driven session has no local end-of-stream.
+        enqueue({"type": "demo_finished"})
+
     pump_task = asyncio.create_task(pump(), name="koe.ws.pump")
 
     try:
@@ -460,6 +516,73 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
                             "language": language.value,
                         }
                     )
+                elif action == "demo":
+                    # Server-driven playback so the realtime path is visible
+                    # without a microphone. Synthetic audio through the real
+                    # session, not an event replay.
+                    from koe.evaluation.corpus import ALL_SCRIPTS
+
+                    raw_script = ALL_SCRIPTS.get(str(control.get("meeting", "quarterly-ja")))
+                    if raw_script is None:
+                        enqueue({"type": "error", "message": "unknown demo meeting"})
+                        continue
+                    if session is not None:
+                        enqueue({"type": "error", "message": "a session is already running"})
+                        continue
+
+                    # Both the audio generator and the scripted ASR read the
+                    # same re-timed script, so their timelines agree.
+                    script = retime(raw_script)
+                    language = Language(control.get("language", "ja"))
+                    provider = MockASR(
+                        script=script,
+                        degradation=0.0,
+                        timeline=True,
+                        name="demo-asr",
+                        cost_per_audio_minute_usd=0.006,
+                    )
+                    session = StreamingSession(
+                        ctx, provider, config=SessionConfig(language=language)
+                    )
+                    await session.start()
+                    enqueue(
+                        {
+                            "type": "started",
+                            "session_id": session.session_id,
+                            "provider": provider.info.name,
+                            "language": language.value,
+                        }
+                    )
+                    demo_task = asyncio.create_task(run_demo(script), name="koe.demo")
+                    continue
+                elif action == "minutes":
+                    # Generated on the socket the transcript arrived on, so the
+                    # client does not have to re-upload a transcript it already
+                    # streamed to us.
+                    source = last_transcript
+                    if source is None or not source.final_segments:
+                        enqueue({"type": "error", "message": "no transcript to summarize"})
+                        continue
+                    try:
+                        outcome = await MinutesGenerator(services.llm).generate(source)
+                    except Exception as exc:
+                        logger.exception("minutes generation failed")
+                        enqueue({"type": "error", "message": f"minutes failed: {exc}"})
+                        continue
+                    services.metrics.increment("minutes.generated")
+                    enqueue(
+                        {
+                            "type": "minutes",
+                            "minutes": outcome.minutes.model_dump(mode="json"),
+                            "rendered": outcome.minutes.render(),
+                            "grounded": outcome.report.grounded,
+                            "total_claims": outcome.report.total,
+                            "dropped": outcome.dropped,
+                            "repairs": outcome.repairs,
+                            "cost_usd": round(outcome.usage.cost_usd, 6),
+                        }
+                    )
+                    continue
                 elif action == "stop":
                     if session is not None:
                         transcript = await session.finish()
@@ -481,7 +604,12 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
                             }
                         )
                         _record_spend(services, session)
+                        last_transcript = transcript
                         session = None
+                    # Deliberately not breaking: the client follows up with a
+                    # minutes request on the same socket.
+                    continue
+                elif action == "close":
                     break
                 continue
 
@@ -519,6 +647,10 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
         with contextlib.suppress(Exception):
             await websocket.send_json({"type": "error", "message": "internal error"})
     finally:
+        if demo_task is not None and not demo_task.done():
+            demo_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await demo_task
         pump_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await pump_task
