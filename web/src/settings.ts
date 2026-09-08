@@ -202,7 +202,7 @@ export class SettingsDialog {
       card.append(
         h("p", { class: "note", text: `${s.fromEnvironmentHint} (${provider.env_var})` }),
       );
-      card.append(this.actions(provider, { save: null }));
+      card.append(this.actions(provider));
       return card;
     }
 
@@ -222,7 +222,7 @@ export class SettingsDialog {
     });
 
     card.append(h("div", { class: "row", style: "margin-bottom:8px" }, input, save));
-    card.append(this.actions(provider, { save }));
+    card.append(this.actions(provider));
     return card;
   }
 
@@ -234,14 +234,11 @@ export class SettingsDialog {
       error: { cls: "chip warn", text: s.statusError },
       unknown: { cls: "chip", text: s.statusUnknown },
     } as const;
-    const entry = map[provider.status];
+    const entry = map[provider.status] ?? map.unknown;
     return h("span", { class: entry.cls, text: entry.text });
   }
 
-  private actions(
-    provider: ProviderCredential,
-    _context: { save: HTMLButtonElement | null },
-  ): HTMLElement {
+  private actions(provider: ProviderCredential): HTMLElement {
     const s = this.strings;
     const row = h("div", { class: "row" });
 
