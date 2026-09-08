@@ -10,9 +10,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
+/build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
@@ -66,3 +66,8 @@ terraform.tfstate*
 node_modules/
 web/node_modules/
 *.tsbuildinfo
+
+# The built web bundle IS committed: koe serve must work without a Node
+# toolchain, and CI verifies it matches the sources.
+!web/dist/
+!web/dist/app.js
