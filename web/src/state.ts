@@ -4,9 +4,9 @@
  * A deliberately small observable store rather than a framework. Two reasons,
  * and the second is the real one:
  *
- *   1. Bundle size. The whole client is ~20KB; React plus a state library
- *      would be ~150KB before any application code, on a page whose job is to
- *      keep an audio pipeline fed.
+ *   1. Bundle size. The whole client is ~14KB gzipped; React plus a state
+ *      library would be ~45KB gzipped before any application code, on a page
+ *      whose job is to keep an audio pipeline fed.
  *   2. **The hot path must not go through the store at all.** The level meter
  *      updates 20 times a second and the waveform every animation frame. Those
  *      write to the DOM and the canvas directly. Routing them through a
@@ -80,6 +80,10 @@ export interface AppState {
   readonly tab: "minutes" | "routing" | "metrics";
   readonly providers: readonly ProviderRow[];
   readonly rejected: Readonly<Record<string, string>>;
+  /** The LLM backend actually in use, as reported by the server. */
+  readonly activeLlm: string;
+  /** Transcript filter. Empty means show everything. */
+  readonly query: string;
   readonly error: string | null;
 }
 
@@ -102,6 +106,8 @@ export const INITIAL: AppState = {
   tab: "minutes",
   providers: [],
   rejected: {},
+  activeLlm: "",
+  query: "",
   error: null,
 };
 

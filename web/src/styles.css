@@ -886,3 +886,279 @@ kbd {
 .pane-body::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---------------------------------------------------------------- dialog */
+
+/*
+ * Uses the native <dialog> element rather than a div with a z-index. The
+ * browser then supplies the focus trap, Escape-to-close, inertness of the
+ * page behind, and correct semantics for assistive technology — all of which
+ * are routinely reimplemented badly.
+ */
+.modal {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0;
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(86dvh, 900px);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.modal::backdrop {
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(2px);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  padding: calc(var(--step) * 4);
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+
+/*
+ * Flex column rather than a hard-coded body height: the head and foot take
+ * what they need and the body gets the rest, which is the only version that
+ * survives a short window, a long provider list, and a translated label that
+ * wraps to two lines.
+ *
+ * Scoped to [open] so the UA's `dialog:not([open]) { display: none }` still
+ * wins for a closed dialog.
+ */
+.modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-head,
+.modal-foot {
+  flex: none;
+}
+
+.modal-body {
+  padding: calc(var(--step) * 4);
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 3) calc(var(--step) * 4);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+/* ---------------------------------------------------------------- forms */
+
+.field {
+  display: block;
+  margin-bottom: calc(var(--step) * 4);
+}
+
+.field > .label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: calc(var(--step) * 1.5);
+}
+
+.input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+}
+
+/* ---------------------------------------------------------------- provider cards */
+
+.provider {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--step) * 3);
+  margin-bottom: calc(var(--step) * 3);
+  background: var(--surface-2);
+}
+
+.provider-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  margin-bottom: calc(var(--step) * 2);
+}
+
+.provider-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.provider-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+.provider .note a {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- notifications */
+
+/*
+ * A stack rather than a single slot: two things can fail at once, and the
+ * second replacing the first means the user never sees it.
+ */
+.toasts {
+  position: fixed;
+  inset-block-end: calc(var(--step) * 4);
+  inset-inline-end: calc(var(--step) * 4);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 2);
+  z-index: 60;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--step) * 2);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-inline-start: 3px solid var(--text-3);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  padding: calc(var(--step) * 3);
+  font-size: 13px;
+  pointer-events: auto;
+  animation: rise 160ms ease;
+}
+
+.toast.error { border-inline-start-color: var(--danger); }
+.toast.ok { border-inline-start-color: var(--ok); }
+.toast.info { border-inline-start-color: var(--accent); }
+
+.toast .close {
+  margin-inline-start: auto;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.toast .close:hover { color: var(--text); }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------------------------------------------------------------- search */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 2) calc(var(--step) * 4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+/* A class-level `display` beats the UA sheet's [hidden] rule, so restate it. */
+.search[hidden] {
+  display: none;
+}
+
+.search input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: 12px;
+  font-family: var(--font-ja);
+  color: var(--text);
+}
+
+/* The close button already clears the query; a second × beside it reads as
+   two different actions. */
+.search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.search .count {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+mark.find {
+  background: color-mix(in srgb, var(--warn) 40%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.utt.dimmed { opacity: 0.32; }
+
+/* ---------------------------------------------------------------- shortcuts */
+
+.keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: calc(var(--step) * 2) calc(var(--step) * 4);
+  align-items: center;
+  font-size: 13px;
+}
+
+.keys kbd { justify-self: start; }

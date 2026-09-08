@@ -34,6 +34,8 @@
             <option value="en">English</option>
           </select>
           <button class="icon-btn" id="theme" type="button" aria-label="テーマ切替">◑</button>
+          <button class="icon-btn" id="settings" type="button" aria-label="設定">⚙</button>
+          <button class="icon-btn" id="help" type="button" aria-label="キーボードショートカット">?</button>
         </div>
       </header>
 
@@ -79,6 +81,34 @@
             <span class="pane-title" id="t-transcript">文字起こし</span>
             <div class="spacer" style="flex: 1"></div>
             <span class="note" id="stats"></span>
+            <button
+              class="icon-btn"
+              id="search-toggle"
+              type="button"
+              aria-label="検索"
+              aria-controls="search"
+              aria-expanded="false"
+            >
+              ⌕
+            </button>
+            <button class="icon-btn" id="copy-transcript" type="button" aria-label="文字起こしをコピー">
+              ⧉
+            </button>
+          </div>
+
+          <!-- Filtering rather than jump-to-next: in a meeting transcript the
+               question is almost always “where was X discussed”, and the
+               non-matching lines are noise for that question. -->
+          <div class="search" id="search" hidden>
+            <input
+              id="search-input"
+              type="search"
+              autocomplete="off"
+              placeholder="文字起こしを検索"
+              aria-label="文字起こしを検索"
+            />
+            <span class="count" id="search-count" aria-live="polite"></span>
+            <button class="icon-btn" id="search-close" type="button" aria-label="閉じる">×</button>
           </div>
 
           <div class="strip-wrap">

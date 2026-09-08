@@ -262,7 +262,7 @@ Everything runs on deterministic mocks — **no API keys required**.
 ```bash
 python -m venv .venv && source .venv/bin/activate   # .venv/Scripts/activate on Windows
 pip install -e ".[dev,api,cli,ja]"
-pytest                                              # 400 tests
+pytest                                              # 473 tests
 ```
 
 ```bash
@@ -277,9 +277,24 @@ koe serve                   # API + live web client on :8000
 Real providers activate when credentials are present:
 
 ```bash
+pip install -e ".[llm]"          # the vendor SDKs are an optional extra
 export KOE_ANTHROPIC_API_KEY=sk-...
 koe minutes --live
 ```
+
+Or paste a key into **Settings** in the running app — it takes effect on the
+next request, with no restart. Three properties that panel holds to:
+
+| Rule | Why |
+|---|---|
+| A stored key is never returned, only a fingerprint (`sk-ant-…9f2c`) | A UI that can read a secret back is one bug away from leaking it |
+| The environment wins over the stored key, and the panel refuses to edit it | A deployment injecting secrets must not be overridden by a stale file |
+| Saving does not verify; **Test** is a separate button | Verification costs a request, and a save that silently spends money is a surprise |
+
+Keys are encrypted at rest with DPAPI on Windows and obfuscated elsewhere, in
+the user config directory — never in the repository. A key whose vendor SDK is
+missing from the build keeps the mock in use and says so, rather than reporting
+a backend that would fail on first call.
 
 ### The live client
 
