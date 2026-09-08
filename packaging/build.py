@@ -25,6 +25,7 @@ that quietly triples when a dependency is added.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -255,6 +256,27 @@ def verify() -> None:
         if segments == 0:
             raise SystemExit("the bundled pipeline produced no segments")
         print(f"   pipeline: {segments} segments via {transcript['routed_to']}")
+
+        # And fetch the page the window will actually show. This check exists
+        # because its absence shipped: the resource path was wrong for a frozen
+        # build, so `/` served the "build the client" placeholder while every
+        # check above passed. A binary that answers /health is not a binary
+        # that runs the product.
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=20) as response:
+            page = response.read().decode("utf-8", "replace")
+        if "Build the client" in page or 'id="toggle"' not in page:
+            raise SystemExit(
+                "the bundle serves the placeholder page, not the web client — "
+                "the client is missing from the bundle or _web_root() is wrong"
+            )
+
+        # The bundle is served from /static; a 200 on the page with a 404 on
+        # its script is the same failure one layer down.
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/app.js", timeout=20) as res:
+            script_bytes = len(res.read())
+        if script_bytes < 1000:
+            raise SystemExit(f"/static/app.js is {script_bytes} bytes; the bundle is not there")
+        print(f"   client:   index.html + app.js ({script_bytes / 1024:,.0f} KB)")
     finally:
         process.terminate()
         try:
@@ -276,6 +298,21 @@ def build_installer() -> Path | None:
     run([str(compiler), str(PACKAGING / "koe.iss")], cwd=ROOT)
     produced = sorted(DIST.glob("koe-setup-*.exe"))
     return produced[-1] if produced else None
+
+
+def write_checksum(target: Path) -> str:
+    """Write `SHA256SUMS.txt` beside `target` and return the digest.
+
+    The installer is unsigned — a code-signing certificate is a recurring cost
+    this project does not carry — so Windows will show a SmartScreen warning on
+    a downloaded copy. A published digest is what turns "trust me" into
+    something a user can actually check before they click through it, and it is
+    the only integrity guarantee an unsigned binary has.
+    """
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    # `sha256sum -c` / `Get-FileHash` format: digest, two spaces, bare name.
+    (target.parent / "SHA256SUMS.txt").write_text(f"{digest}  {target.name}\n", encoding="utf-8")
+    return digest
 
 
 # --------------------------------------------------------------------------
@@ -324,6 +361,7 @@ def main() -> int:
         installer = build_installer()
         if installer:
             print(f"  setup  {installer}  ({installer.stat().st_size / 1024 / 1024:,.0f} MB)")
+            print(f"  sha256 {write_checksum(installer)}")
     print("=" * 66)
     return 0
 

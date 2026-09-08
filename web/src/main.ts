@@ -24,10 +24,11 @@
 
 import "./styles.css";
 
-import { MicrophoneCapture } from "./audio";
+import { AudioCapture, CaptureError } from "./audio";
 import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
-import { SettingsDialog, ShortcutsDialog } from "./settings";
+import * as prefs from "./prefs";
+import { SettingsDialog, ShortcutsDialog, type SettingsHost } from "./settings";
 import {
   INITIAL,
   Store,
@@ -145,7 +146,7 @@ function isTyping(): boolean {
 
 /* ------------------------------------------------------------------ theme */
 
-type Theme = "light" | "dark" | "system";
+import type { Theme } from "./settings";
 
 function applyTheme(theme: Theme): void {
   const root = document.documentElement;
@@ -174,7 +175,8 @@ function loadTheme(): Theme {
 class App {
   private readonly store = new Store({ ...INITIAL, uiLang: detectUILang() });
   private client: StreamClient | null = null;
-  private capture: MicrophoneCapture | null = null;
+  private capture: AudioCapture | null = null;
+  private prefs: prefs.Prefs = prefs.load();
   private theme: Theme = loadTheme();
   private tickTimer = 0;
   private startedAt = 0;
@@ -213,8 +215,10 @@ class App {
   };
 
   private readonly notify = new Notifications(undefined, this.refs.live);
-  private readonly settings = new SettingsDialog(this.notify, strings(detectUILang()), () =>
-    void this.loadActiveModel(),
+  private readonly settings = new SettingsDialog(
+    this.notify,
+    strings(detectUILang()),
+    this.settingsHost(),
   );
   private readonly shortcuts = new ShortcutsDialog(strings(detectUILang()));
 
@@ -261,12 +265,7 @@ class App {
 
     this.refs.themeBtn.addEventListener("click", () => {
       const order: Theme[] = ["system", "light", "dark"];
-      this.theme = order[(order.indexOf(this.theme) + 1) % order.length];
-      applyTheme(this.theme);
-      this.refs.themeBtn.textContent = this.theme === "dark" ? "◐" : this.theme === "light" ? "○" : "◑";
-      this.levelStrip.render();
-      const state = this.store.get();
-      this.timeline.render(state.utterances, Math.max(state.durationS, 1));
+      this.applyThemeChoice(order[(order.indexOf(this.theme) + 1) % order.length]);
     });
 
     this.refs.settingsBtn.addEventListener("click", () => void this.settings.open());
@@ -364,6 +363,70 @@ class App {
     this.store.set({ query: "" });
   }
 
+  /**
+   * The settings panel's view of this application.
+   *
+   * Handed over as a small interface rather than `this`, so the dialog can
+   * read and write settings and nothing else — it cannot reach into the
+   * session, the store, or the render path.
+   */
+  private settingsHost(): SettingsHost {
+    return {
+      getPrefs: () => this.prefs,
+      setPrefs: (patch) => this.updatePrefs(patch),
+      getTheme: () => this.theme,
+      setTheme: (theme) => this.applyThemeChoice(theme),
+      getUiLang: () => this.store.get().uiLang,
+      setUiLang: (uiLang) => {
+        this.refs.uiLang.value = uiLang;
+        this.refs.uiLang.dispatchEvent(new Event("change"));
+      },
+      getAsrLang: () => this.store.get().asrLang,
+      setAsrLang: (asrLang) => {
+        this.refs.asrLang.value = asrLang;
+        this.store.set({ asrLang });
+      },
+      onCredentialsChanged: () => void this.loadActiveModel(),
+      isRecording: () => {
+        const status = this.store.get().status;
+        return status === "live" || status === "connecting";
+      },
+    };
+  }
+
+  private updatePrefs(patch: Partial<prefs.Prefs>): void {
+    this.prefs = { ...this.prefs, ...patch };
+    prefs.save(this.prefs);
+    // Gain is the one setting that can take effect without restarting the
+    // session, and a volume control that needs a restart is not a volume
+    // control. Everything else applies to the next session by construction.
+    if (patch.gain !== undefined) this.capture?.setGain(patch.gain);
+  }
+
+  private applyThemeChoice(theme: Theme): void {
+    this.theme = theme;
+    applyTheme(theme);
+    this.refs.themeBtn.textContent = theme === "dark" ? "◐" : theme === "light" ? "○" : "◑";
+    // The canvases paint with resolved theme colours, so they are stale the
+    // instant the palette changes and nothing else redraws them.
+    this.levelStrip.render();
+    const state = this.store.get();
+    this.timeline.render(state.utterances, Math.max(state.durationS, 1));
+  }
+
+  /** Name why a capture failed, rather than blaming the microphone for all of it. */
+  private captureMessage(error: unknown): string {
+    const s = this.s;
+    if (error instanceof CaptureError) {
+      if (error.reason === "no-audio") return s.shareNoAudio;
+      if (error.reason === "unsupported") return s.shareUnsupported;
+      if (error.reason === "denied") {
+        return this.prefs.source === "system" ? s.shareCancelled : s.micDenied;
+      }
+    }
+    return s.micDenied;
+  }
+
   /* ---------------------------------------------------------------- session */
 
   private async toggle(): Promise<void> {
@@ -382,7 +445,11 @@ class App {
    * worth seeing.
    */
   private async startDemo(): Promise<void> {
-    if (this.store.get().status === "live") return;
+    // "connecting" counts as busy. Guarding only on "live" left a window
+    // between the click and the socket opening in which a second click
+    // started a second session.
+    const status = this.store.get().status;
+    if (status === "live" || status === "connecting") return;
     this.demoMode = true;
     this.store.set({
       status: "connecting",
@@ -416,13 +483,30 @@ class App {
     }, 250);
   }
 
-  /** Build a client bound to this app's handlers. */
+  /**
+   * Build a client bound to this app's handlers.
+   *
+   * Closes any previous socket first. Without that, a second session could be
+   * opened while the first was still delivering, both would push finals into
+   * the same store, and the transcript came out with every line twice — which
+   * is exactly what happened when the demo button was pressed twice before the
+   * first connection had finished opening.
+   */
   private connect(): StreamClient {
+    this.client?.close();
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const client = new StreamClient(`${scheme}://${location.host}/v1/stream`, {
-      onMessage: (message) => this.onMessage(message),
-      onError: () => this.fail(this.s.cannotConnect),
+      onMessage: (message) => {
+        // A late frame from a socket we have already replaced belongs to a
+        // session the user ended; applying it would revive dead state.
+        if (this.client !== client) return;
+        this.onMessage(message);
+      },
+      onError: () => {
+        if (this.client === client) this.fail(this.s.cannotConnect);
+      },
       onClose: () => {
+        if (this.client !== client) return;
         if (this.store.get().status === "live") this.store.set({ status: "stopped" });
       },
     });
@@ -456,22 +540,44 @@ class App {
       return;
     }
 
-    client.start({ language: this.store.get().asrLang, partialIntervalMs: 400 });
+    client.start({
+      language: this.store.get().asrLang,
+      partialIntervalMs: this.prefs.partialIntervalMs,
+      // Omitted when the user wants the language defaults, because the server
+      // keeps a longer silence window for Japanese and sending a number here
+      // would silently overwrite it.
+      ...(this.prefs.useEndpointDefaults
+        ? {}
+        : {
+            silenceToEndMs: this.prefs.silenceToEndMs,
+            speechThresholdDb: this.prefs.speechThresholdDb,
+          }),
+    });
 
-    this.capture = new MicrophoneCapture({
+    this.capture = new AudioCapture({
+      source: this.prefs.source,
+      deviceId: this.prefs.inputDeviceId,
+      gain: this.prefs.gain,
+      echoCancellation: this.prefs.echoCancellation,
+      noiseSuppression: this.prefs.noiseSuppression,
+      autoGainControl: this.prefs.autoGainControl,
       onFrame: (frame) => client.sendAudio(frame),
       onLevel: (level) => {
         this.refs.levelFill.style.width = `${Math.min(100, level * 140)}%`;
         this.levelStrip.push(level);
       },
+      // Pressing "Stop sharing" in the browser's own bar ends the track and
+      // says nothing else. Without this the session sits recording silence.
+      onSourceEnded: () => {
+        this.notify.info(this.s.sourceEnded);
+        void this.stop();
+      },
     });
 
     try {
       await this.capture.start();
-    } catch {
-      // Overwhelmingly this is a denied permission prompt; the browser gives
-      // no way to distinguish that from a missing device.
-      this.fail(this.s.micDenied);
+    } catch (error) {
+      this.fail(this.captureMessage(error));
       client.close();
       this.capture = null;
       return;

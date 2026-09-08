@@ -162,17 +162,50 @@ Every claim below was checked against the built artifact, not assumed:
 exe properties     ProductName koe · FileVersion 0.1.0 · publisher jon-jc
 frozen launch      health ok · japanese_tokenizer mecab
 frozen pipeline    6 segments via mock-accurate, speaker 田中
-installer          silent install → 299 MB, koe.exe + uninstaller present
+installer (silent) /VERYSILENT → 299 MB, koe.exe + uninstaller present
+installer (wizard) driven through every page → installed to
+                   %LOCALAPPDATA%\Programs\koe, Start Menu shortcuts created,
+                   "Launch koe" opened the window and bound a port
 installed binary   /health ok, /v1/transcribe returns 6 JA segments
 uninstall          clean; settings and meetings deliberately preserved
 webview            secureContext, mediaDevices, audioWorklet all true
 ```
 
+The two installer rows are separate because for a while only the first existed,
+and it hid a real problem. `/VERYSILENT` skips the language prompt, the licence
+page, the install-mode chooser and the post-install launch — so a silent install
+passing says nothing about what a person double-clicking the file experiences.
+Driving the wizard is what surfaced two dialogs that were asking questions
+nobody needed to answer.
+
+### The download is the part that fails
+
+A locally built installer runs. A *downloaded* one does not, and that
+distinction is invisible until you test it:
+
+```
+copy of installer + Mark of the Web (ZoneId=3)
+  → double-click → smartscreen.exe runs, setup process exits, no window
+```
+
+That is what an unsigned binary does when it arrives from a browser. Nothing
+about the installer is wrong; SmartScreen simply has no reputation for the file.
+The mitigations that are actually available without a certificate are all in
+place: releases publish the raw `.exe` rather than a login-gated zip, a
+`SHA256SUMS.txt` ships beside it so the download can be verified, both READMEs
+state exactly what Windows will show and what to click, and a `pip install`
+route exists for anyone who would rather not click through a security warning at
+all.
+
 ## Not done
 
-- **The binary is unsigned.** Windows SmartScreen will warn on first run. Code
-  signing needs a certificate; without one, signing is not something that can be
-  faked convincingly and pretending otherwise would be worse than saying so.
+- **The binary is unsigned.** SmartScreen blocks a downloaded copy behind
+  *More info → Run anyway*. Code signing needs a certificate — an OV
+  certificate is a recurring cost, and even a fresh one carries no reputation
+  for weeks. Without it, signing is not something that can be faked
+  convincingly, and pretending otherwise would be worse than saying so. What
+  the project does instead is documented above: publish the hash, say what the
+  warning means, and offer a route that avoids it.
 - **No auto-update.** The installer supports in-place upgrade (same `AppId`),
   but nothing checks for new versions.
 - **Windows only.** The packaging is Windows-specific. The application code is

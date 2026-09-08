@@ -118,6 +118,58 @@ export interface Strings {
   readonly shortcutHelp: string;
   readonly shortcutClose: string;
   readonly dismiss: string;
+  /* -- settings panel ------------------------------------------- */
+  readonly secAudio: string;
+  readonly secRecognition: string;
+  readonly secModels: string;
+  readonly secAppearance: string;
+  readonly secAbout: string;
+  readonly audioSource: string;
+  readonly sourceMic: string;
+  readonly sourceSystem: string;
+  readonly sourceBoth: string;
+  readonly sourceMicHint: string;
+  readonly sourceSystemHint: string;
+  readonly sourceBothHint: string;
+  readonly windowsAudioNote: string;
+  readonly inputDevice: string;
+  readonly systemDefault: string;
+  readonly refreshDevices: string;
+  readonly deviceNamesHidden: string;
+  readonly noInputDevices: string;
+  readonly testInput: string;
+  readonly stopTest: string;
+  readonly testInputHint: string;
+  readonly testWhileRecording: string;
+  readonly inputGain: string;
+  readonly inputGainHint: string;
+  readonly processing: string;
+  readonly echoCancellation: string;
+  readonly noiseSuppression: string;
+  readonly autoGainControl: string;
+  readonly processingHint: string;
+  readonly partialInterval: string;
+  readonly partialIntervalHint: string;
+  readonly endpointing: string;
+  readonly useLanguageDefaults: string;
+  readonly useLanguageDefaultsHint: string;
+  readonly silenceToEnd: string;
+  readonly silenceToEndHint: string;
+  readonly speechThreshold: string;
+  readonly speechThresholdHint: string;
+  readonly themeLabel: string;
+  readonly themeSystem: string;
+  readonly themeLight: string;
+  readonly themeDark: string;
+  readonly version: string;
+  readonly japaneseTokenizer: string;
+  readonly restoreDefaults: string;
+  readonly restoreDefaultsHint: string;
+  readonly restored: string;
+  readonly sourceEnded: string;
+  readonly shareCancelled: string;
+  readonly shareNoAudio: string;
+  readonly shareUnsupported: string;
   /** Server rejection codes, rendered locally. `{label}` / `{prefix}` /
    *  `{env}` are substituted from the response's `context`. */
   readonly errBadPrefix: string;
@@ -239,6 +291,58 @@ const JA: Strings = {
   shortcutHelp: "このヘルプ",
   shortcutClose: "閉じる / 選択解除",
   dismiss: "閉じる",
+  secAudio: "音声",
+  secRecognition: "認識",
+  secModels: "モデル",
+  secAppearance: "表示",
+  secAbout: "情報",
+  audioSource: "音声の取り込み元",
+  sourceMic: "マイク",
+  sourceSystem: "画面・ウィンドウの音声",
+  sourceBoth: "マイク + 画面音声",
+  sourceMicHint: "この端末のマイクから取り込みます。対面の会議向けです。",
+  sourceSystemHint: "録音開始時に共有するものを選ぶ画面が表示されます。オンライン会議の相手側の音声を文字起こしする場合はこちらです。",
+  sourceBothHint: "自分の声をマイクから、相手の声を画面共有から取り込みます。ハイブリッド会議はこの組み合わせです。",
+  windowsAudioNote: "Windows では、画面全体またはブラウザのタブを共有した場合にのみ音声を取り込めます。単一のアプリウィンドウを選ぶと音声は含まれません (Chromium の制限)。共有時は「音声を共有する」を必ず有効にしてください。",
+  inputDevice: "入力デバイス",
+  systemDefault: "システム既定",
+  refreshDevices: "再検出",
+  deviceNamesHidden: "デバイス名はマイクの使用許可後に表示されます。",
+  noInputDevices: "入力デバイスが見つかりません。",
+  testInput: "入力テスト",
+  stopTest: "テスト停止",
+  testInputHint:
+    "選んだ取り込み元で実際に音を拾えているかを確認します。話しかけるとバーが動きます。",
+  testWhileRecording: "録音中は入力テストを実行できません。",
+  inputGain: "入力ゲイン",
+  inputGainHint: "取り込み後に適用する音量です。録音中でも即座に反映されます。",
+  processing: "ブラウザ側の音声処理",
+  echoCancellation: "エコーキャンセル",
+  noiseSuppression: "ノイズ抑制",
+  autoGainControl: "自動ゲイン調整",
+  processingHint: "通常は有効のままで問題ありません。会議室の集音マイクや音楽を扱う場合は無効にしてください。処理が音声を削ってしまうことがあります。",
+  partialInterval: "途中結果の更新間隔",
+  partialIntervalHint: "短いほど表示は速くなりますが、その分だけ認識の呼び出し回数が増えます。",
+  endpointing: "発話の区切り判定",
+  useLanguageDefaults: "言語ごとの既定値を使う",
+  useLanguageDefaultsHint: "日本語は英語より長い無音時間を使います。文末の助詞や敬語の前で話者が一呼吸置くため、英語向けの設定では動詞ごと切り落とされます。",
+  silenceToEnd: "発話終了と判定する無音時間",
+  silenceToEndHint: "実時間の遅延にそのまま加算される値です。短くすると発話が途中で切れます。",
+  speechThreshold: "発話と判定する音量",
+  speechThresholdHint: "推定したノイズフロアからの相対値です。騒がしい場所では上げてください。",
+  themeLabel: "テーマ",
+  themeSystem: "システムに合わせる",
+  themeLight: "ライト",
+  themeDark: "ダーク",
+  version: "バージョン",
+  japaneseTokenizer: "日本語トークナイザ",
+  restoreDefaults: "既定値に戻す",
+  restoreDefaultsHint: "この端末の設定のみを初期化します。APIキーは削除されません。",
+  restored: "設定を初期化しました。",
+  sourceEnded: "画面の共有が終了したため、録音を停止しました。",
+  shareCancelled: "共有がキャンセルされました。",
+  shareNoAudio: "選択した共有には音声が含まれていません。画面全体またはタブを選び、「音声を共有する」を有効にしてください。",
+  shareUnsupported: "このブラウザは画面音声の取り込みに対応していません。",
   errBadPrefix: "{label} のキーは {prefix} で始まります。貼り付けた内容をご確認ください。",
   errEmptyKey: "キーを入力してください。",
   errEnvManaged: "{env} で設定されているため、ここからは変更できません。",
@@ -358,6 +462,58 @@ const EN: Strings = {
   shortcutHelp: "this help",
   shortcutClose: "close / clear selection",
   dismiss: "Dismiss",
+  secAudio: "Audio",
+  secRecognition: "Recognition",
+  secModels: "Models",
+  secAppearance: "Appearance",
+  secAbout: "About",
+  audioSource: "Audio source",
+  sourceMic: "Microphone",
+  sourceSystem: "Screen or window audio",
+  sourceBoth: "Microphone + screen audio",
+  sourceMicHint: "Capture from this machine's microphone. For an in-person meeting.",
+  sourceSystemHint: "You pick what to share when recording starts. This is how you transcribe the far side of an online meeting.",
+  sourceBothHint: "Your voice from the microphone, everyone else from the shared audio. This is the combination a hybrid meeting needs.",
+  windowsAudioNote: "On Windows, audio is only available when you share an entire screen or a browser tab — a single application window carries no audio (a Chromium limitation). Tick “Share audio” in the picker.",
+  inputDevice: "Input device",
+  systemDefault: "System default",
+  refreshDevices: "Rescan",
+  deviceNamesHidden: "Device names appear once microphone permission has been granted.",
+  noInputDevices: "No input devices found.",
+  testInput: "Test input",
+  stopTest: "Stop test",
+  testInputHint:
+    "Check that the source you picked is actually picking anything up. Speak, and the bar moves.",
+  testWhileRecording: "The input test cannot run while recording.",
+  inputGain: "Input gain",
+  inputGainHint: "Applied after capture. Takes effect immediately, even while recording.",
+  processing: "Browser audio processing",
+  echoCancellation: "Echo cancellation",
+  noiseSuppression: "Noise suppression",
+  autoGainControl: "Automatic gain control",
+  processingHint: "Leave these on for a normal setup. Turn them off for a room microphone or for music, where the processing removes signal.",
+  partialInterval: "Interim update interval",
+  partialIntervalHint: "Lower feels faster and costs proportionally more: every interim result is another decode of the utterance so far.",
+  endpointing: "Endpointing",
+  useLanguageDefaults: "Use the language defaults",
+  useLanguageDefaultsHint: "Japanese uses a longer silence window than English: speakers pause before sentence-final particles and polite endings, and an English-tuned endpointer cuts there — removing the verb.",
+  silenceToEnd: "Silence before an utterance ends",
+  silenceToEndHint: "Added directly to every utterance's latency. Shortening it truncates speech.",
+  speechThreshold: "Speech threshold",
+  speechThresholdHint: "Measured against the tracked noise floor. Raise it in a noisy room.",
+  themeLabel: "Theme",
+  themeSystem: "Match system",
+  themeLight: "Light",
+  themeDark: "Dark",
+  version: "Version",
+  japaneseTokenizer: "Japanese tokenizer",
+  restoreDefaults: "Restore defaults",
+  restoreDefaultsHint: "Resets this device's preferences only. API keys are not removed.",
+  restored: "Preferences restored.",
+  sourceEnded: "Screen sharing ended, so recording stopped.",
+  shareCancelled: "The share was cancelled.",
+  shareNoAudio: "That share carries no audio. Pick an entire screen or a tab, and tick “Share audio”.",
+  shareUnsupported: "This browser cannot capture screen audio.",
   errBadPrefix: "{label} keys start with {prefix} — check what you pasted.",
   errEmptyKey: "Enter a key.",
   errEnvManaged: "Set by {env}, so it cannot be changed here.",

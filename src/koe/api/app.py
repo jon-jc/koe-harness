@@ -20,10 +20,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import sys
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ from koe.minutes.demo import demo_llm
 from koe.minutes.generator import MinutesGenerator
 from koe.minutes.schema import Minutes
 from koe.pipeline.session import SessionConfig, StreamingSession
+from koe.pipeline.vad import VADConfig
 from koe.providers.credentials import (
     PROVIDERS_BY_ID,
     CredentialError,
@@ -635,7 +637,10 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
                         provider,
                         config=SessionConfig(
                             language=language,
-                            partial_interval_ms=float(control.get("partial_interval_ms", 500)),
+                            partial_interval_ms=_clamp(
+                                control.get("partial_interval_ms"), 150.0, 2000.0, 500.0
+                            ),
+                            vad=_vad_overrides(control, language),
                         ),
                     )
                     await session.start()
@@ -814,8 +819,65 @@ def _record_spend(services: Services, session: StreamingSession) -> None:
 # --------------------------------------------------------------------------
 
 
+def _clamp(value: Any, low: float, high: float, default: float) -> float:
+    """Coerce a client-supplied number into a range we are willing to run.
+
+    Session settings are user-facing controls now, which means they arrive
+    from a browser and cannot be trusted to be sane: a `silence_to_end_ms` of
+    zero ends every utterance on the first quiet frame, and one of 60000 means
+    a session that never emits. Clamping beats validating-and-rejecting here
+    because the sliders that produce these values are already bounded, so an
+    out-of-range value is a bug or an attack rather than a user's intent.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number:  # NaN
+        return default
+    return max(low, min(high, number))
+
+
+def _vad_overrides(control: dict[str, Any], language: Language) -> VADConfig | None:
+    """Endpointing settings from the client, over the language default.
+
+    Returns None when the client sent nothing, so the language-tuned default
+    stays in force — Japanese needs a longer silence window than English, and
+    silently replacing that with a hardcoded number would undo the single
+    most user-visible tuning decision in the realtime path.
+    """
+    silence = control.get("silence_to_end_ms")
+    threshold = control.get("speech_threshold_db")
+    if silence is None and threshold is None:
+        return None
+
+    base = VADConfig.for_language(language)
+    return replace(
+        base,
+        silence_to_end_ms=_clamp(silence, 200.0, 3000.0, base.silence_to_end_ms),
+        speech_threshold_db=_clamp(threshold, 3.0, 24.0, base.speech_threshold_db),
+    )
+
+
 def _web_root() -> Path:
-    """Where the built web client lives, relative to the installed package."""
+    """Where the built web client lives.
+
+    In a checkout that is ``<repo>/web``, four levels up from this module. In a
+    PyInstaller bundle there is no repository: modules report a ``__file__``
+    inside the extraction directory, so ``parents[3]`` walks one level *past*
+    it and lands on the application folder, where nothing was ever installed.
+    The bundle puts the client at ``<_MEIPASS>/web``.
+
+    This shipped broken, and the reason is worth recording: the failure is
+    invisible from every endpoint the packaging check exercised. ``/health``,
+    ``/v1/*`` and the websocket all worked perfectly in the frozen build — the
+    only symptom was that the desktop window contained the "build the client"
+    placeholder instead of the application. Verifying a server by asking it
+    whether it is alive does not verify that it serves the product.
+    """
+    bundle = getattr(sys, "_MEIPASS", None)
+    if bundle is not None:
+        return Path(bundle) / "web"
     return Path(__file__).resolve().parents[3] / "web"
 
 
