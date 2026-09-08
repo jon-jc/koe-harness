@@ -137,6 +137,10 @@ export interface Strings {
   readonly refreshDevices: string;
   readonly deviceNamesHidden: string;
   readonly noInputDevices: string;
+  readonly testInput: string;
+  readonly stopTest: string;
+  readonly testInputHint: string;
+  readonly testWhileRecording: string;
   readonly inputGain: string;
   readonly inputGainHint: string;
   readonly processing: string;
@@ -305,6 +309,11 @@ const JA: Strings = {
   refreshDevices: "再検出",
   deviceNamesHidden: "デバイス名はマイクの使用許可後に表示されます。",
   noInputDevices: "入力デバイスが見つかりません。",
+  testInput: "入力テスト",
+  stopTest: "テスト停止",
+  testInputHint:
+    "選んだ取り込み元で実際に音を拾えているかを確認します。話しかけるとバーが動きます。",
+  testWhileRecording: "録音中は入力テストを実行できません。",
   inputGain: "入力ゲイン",
   inputGainHint: "取り込み後に適用する音量です。録音中でも即座に反映されます。",
   processing: "ブラウザ側の音声処理",
@@ -471,6 +480,11 @@ const EN: Strings = {
   refreshDevices: "Rescan",
   deviceNamesHidden: "Device names appear once microphone permission has been granted.",
   noInputDevices: "No input devices found.",
+  testInput: "Test input",
+  stopTest: "Stop test",
+  testInputHint:
+    "Check that the source you picked is actually picking anything up. Speak, and the bar moves.",
+  testWhileRecording: "The input test cannot run while recording.",
   inputGain: "Input gain",
   inputGainHint: "Applied after capture. Takes effect immediately, even while recording.",
   processing: "Browser audio processing",

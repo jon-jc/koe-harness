@@ -387,6 +387,10 @@ class App {
         this.store.set({ asrLang });
       },
       onCredentialsChanged: () => void this.loadActiveModel(),
+      isRecording: () => {
+        const status = this.store.get().status;
+        return status === "live" || status === "connecting";
+      },
     };
   }
 

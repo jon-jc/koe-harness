@@ -35,7 +35,13 @@
  * one means fix your key, the other means check your network.
  */
 
-import { canCaptureSystemAudio, listInputDevices, type InputDevice } from "./audio";
+import {
+  AudioCapture,
+  CaptureError,
+  canCaptureSystemAudio,
+  listInputDevices,
+  type InputDevice,
+} from "./audio";
 import { h } from "./dom";
 import type { Strings, UILang } from "./i18n";
 import { DEFAULTS, LIMITS, type AudioSource, type Prefs } from "./prefs";
@@ -62,6 +68,8 @@ export interface SettingsHost {
   setAsrLang(lang: ASRLang): void;
   /** A key was added or removed; the live provider may have changed. */
   onCredentialsChanged(): void;
+  /** True while a session owns the audio device. */
+  isRecording(): boolean;
 }
 
 export interface ProviderCredential {
@@ -119,6 +127,9 @@ export class SettingsDialog {
   private listing: CredentialListing | null = null;
   private health: Health | null = null;
   private devices: InputDevice[] = [];
+  /** A short-lived capture used only to prove the chosen source works. */
+  private probe: AudioCapture | null = null;
+  private probeTimer = 0;
 
   constructor(
     private readonly notify: Notifications,
@@ -163,6 +174,11 @@ export class SettingsDialog {
       this.show(SECTIONS[(at + step + SECTIONS.length) % SECTIONS.length]);
       this.nav.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
     });
+
+    // Escape and the backdrop close a <dialog> without going through the
+    // Close button, so releasing the microphone hangs off the close event
+    // rather than off the handler for one of the ways to trigger it.
+    this.dialog.addEventListener("close", () => void this.stopProbe());
 
     this.dialog.append(head, h("div", { class: "modal-split" }, this.nav, this.body), foot);
   }
@@ -346,12 +362,120 @@ export class SettingsDialog {
         prefs.gain,
         LIMITS.gain,
         (value) => `${value.toFixed(2)}×`,
-        (value) => this.host.setPrefs({ gain: value }),
+        (value) => {
+          this.host.setPrefs({ gain: value });
+          // The probe is a live capture, so the slider moves its meter too —
+          // which is the whole point of being able to hear yourself.
+          this.probe?.setGain(value);
+        },
       ),
       h("p", { class: "note", text: s.inputGainHint }),
     );
 
+    parts.push(this.heading(s.testInput));
+    parts.push(this.inputTest(), h("p", { class: "note", text: s.testInputHint }));
+
     return parts;
+  }
+
+  /**
+   * A live level meter for the chosen source.
+   *
+   * A device picker with no meter tells you which microphone you *selected*,
+   * not which one is working — and the difference between those two shows up
+   * after the meeting, in a transcript of silence. This opens the real capture
+   * path with the real settings, so what it proves is what will happen when
+   * recording starts.
+   */
+  private inputTest(): HTMLElement {
+    const s = this.strings;
+    const row = h("div", { class: "slider-row" });
+
+    const meter = h("div", { class: "level", role: "meter", "aria-label": s.testInput });
+    const fill = h("div", { class: "level-fill" });
+    meter.append(fill);
+
+    const button = h("button", {
+      class: "btn ghost",
+      type: "button",
+      text: this.probe ? s.stopTest : s.testInput,
+    }) as HTMLButtonElement;
+
+    button.addEventListener("click", () => {
+      if (this.probe) {
+        void this.stopProbe();
+        this.render();
+        return;
+      }
+      if (this.host.isRecording()) {
+        // One capture at a time: taking the device now would fight the session
+        // that is already using it.
+        this.notify.error(s.testWhileRecording);
+        return;
+      }
+      void this.startProbe(fill, button);
+    });
+
+    row.append(meter, button);
+    return row;
+  }
+
+  private async startProbe(fill: HTMLElement, button: HTMLButtonElement): Promise<void> {
+    const s = this.strings;
+    const prefs = this.host.getPrefs();
+
+    // A permission prompt — or the screen picker — can sit there for as long
+    // as the user takes to answer. Without this, every click during that wait
+    // opens another capture.
+    button.disabled = true;
+    const probe = new AudioCapture({
+      source: prefs.source,
+      deviceId: prefs.inputDeviceId,
+      gain: prefs.gain,
+      echoCancellation: prefs.echoCancellation,
+      noiseSuppression: prefs.noiseSuppression,
+      autoGainControl: prefs.autoGainControl,
+      // Frames are discarded: nothing is transcribed, nothing is sent, and
+      // nothing is billed. Only the level is wanted.
+      onFrame: () => {},
+      onLevel: (level) => {
+        fill.style.width = `${Math.min(100, level * 140)}%`;
+      },
+      onSourceEnded: () => void this.stopProbe(),
+    });
+
+    try {
+      await probe.start();
+    } catch (error) {
+      button.disabled = false;
+      this.notify.error(
+        error instanceof CaptureError && error.reason === "no-audio"
+          ? s.shareNoAudio
+          : error instanceof CaptureError && error.reason === "denied"
+            ? prefs.source === "system"
+              ? s.shareCancelled
+              : s.micDenied
+            : s.micDenied,
+      );
+      return;
+    }
+
+    this.probe = probe;
+    button.disabled = false;
+    button.textContent = s.stopTest;
+    // Bounded, so a panel left open does not hold the microphone — and the
+    // recording indicator — for the rest of the day.
+    this.probeTimer = window.setTimeout(() => {
+      void this.stopProbe();
+      this.render();
+    }, 20_000);
+  }
+
+  private async stopProbe(): Promise<void> {
+    window.clearTimeout(this.probeTimer);
+    const probe = this.probe;
+    this.probe = null;
+    await probe?.stop();
   }
 
   /* --------------------------------------------------------- recognition */
