@@ -253,6 +253,11 @@ def demo(seed: Annotated[int, typer.Option()] = 0) -> None:
     compare(baseline=0.0, candidate=0.12, dataset=None, seed=seed)
 
 
+from koe.cli import minutes_cmd  # noqa: E402
+
+minutes_cmd.register(app, console)
+
+
 def main() -> None:
     app()
 
