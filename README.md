@@ -114,13 +114,14 @@ buried in a handler.
 Built in milestones, each merged via its own PR.
 
 - [x] **M1 — Kernel.** Scopes, reactive services, event bus, plugin lifecycle.
-- [ ] **M2 — Domain & providers.** Typed audio/transcript models, ASR + diarization + LLM adapters, JA/EN normalization.
-- [ ] **M3 — Evaluation.** CER/WER/DER, MeCab tokenization, bootstrap CIs, regression gate.
-- [ ] **M4 — Routing.** Budget-aware model selection, circuit breakers, fallback chains.
-- [ ] **M5 — Realtime pipeline.** VAD, endpointing, partial stabilization, ASR×diarization fusion.
-- [ ] **M6 — LLM layer.** 議事録 generation, groundedness guardrails, schema repair.
-- [ ] **M7 — Serving.** FastAPI + WebSocket, TypeScript voice client.
-- [ ] **M8 — Operations.** Cost ledger, metrics, Docker, Terraform, CI.
+- [x] **M2 — Bilingual text layer.** Script analysis, JA/EN language ID with code-switch detection, 漢数字 parsing, scoring/display normalization profiles, MeCab tokenization with a labelled fallback.
+- [ ] **M3 — Domain & providers.** Typed audio/transcript models, ASR + diarization + LLM adapters.
+- [ ] **M4 — Evaluation.** CER/WER/DER, bootstrap CIs, regression gate.
+- [ ] **M5 — Routing.** Budget-aware model selection, circuit breakers, fallback chains.
+- [ ] **M6 — Realtime pipeline.** VAD, endpointing, partial stabilization, ASR×diarization fusion.
+- [ ] **M7 — LLM layer.** 議事録 generation, groundedness guardrails, schema repair.
+- [ ] **M8 — Serving.** FastAPI + WebSocket, TypeScript voice client.
+- [ ] **M9 — Operations.** Cost ledger, metrics, Docker, Terraform.
 
 ---
 
