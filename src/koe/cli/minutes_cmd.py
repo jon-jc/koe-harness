@@ -21,8 +21,8 @@ from rich.console import Console
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Transcript, attribute_speakers
 from koe.evaluation.corpus import ALL_SCRIPTS
+from koe.minutes.demo import demo_llm
 from koe.minutes.generator import MinutesGenerator
-from koe.minutes.schema import ActionItem, Decision, Minutes, Topic
 from koe.providers.mock import MockASR, MockDiarization, MockLLM
 
 
@@ -36,38 +36,7 @@ async def _build_transcript(script: Any) -> Transcript:
 
 def _canned_llm(transcript: Transcript) -> MockLLM:
     """A stand-in whose output includes one fabricated decision, on purpose."""
-    participants = sorted({s.speaker for s in transcript.final_segments if s.speaker})
-    minutes = Minutes(
-        language=transcript.dominant_language(),
-        title="第三四半期 売上レビュー",
-        participants=participants,
-        summary="第三四半期の売上は目標を達成しました。KPIダッシュボードの更新期限とリリース日を確認しました。",
-        topics=[Topic(title="売上レビュー", summary="前年比120パーセントで目標を達成しました。")],
-        decisions=[
-            Decision(
-                statement="新機能のリリースは3月10日とする",
-                source_quote="新機能のリリースは三月十日を予定しています。",
-                speaker="鈴木",
-            ),
-            Decision(
-                # Nobody said this. It is fluent, plausible, and entirely invented
-                # -- exactly the failure mode the citation check exists to catch.
-                statement="来月中に全社展開を完了する",
-                source_quote="来月中に全社展開することで合意しました。",
-                speaker="田中",
-            ),
-        ],
-        action_items=[
-            ActionItem(
-                task="KPIダッシュボードを更新する",
-                owner="佐藤",
-                due="金曜日",
-                source_quote="はい、金曜日までに対応します。",
-                speaker="佐藤",
-            )
-        ],
-    )
-    return MockLLM(default_response=minutes.model_dump_json())
+    return demo_llm(transcript)
 
 
 def register(app: typer.Typer, console: Console) -> None:

@@ -24,7 +24,35 @@ export type ServerMessage =
       cost_usd: number;
       segments: Array<{ text: string; start: number; end: number; speaker: string }>;
     }
+  | {
+      type: 'minutes';
+      minutes: MinutesPayload;
+      rendered: string;
+      grounded: number;
+      total_claims: number;
+      dropped: string[];
+      repairs: number;
+      cost_usd: number;
+    }
+  | { type: 'level'; value: number }
+  | { type: 'demo_finished' }
   | { type: 'error'; message: string };
+
+/** The subset of the server's minutes model the client renders. */
+export interface MinutesPayload {
+  title: string;
+  participants: string[];
+  summary: string;
+  topics: Array<{ title: string; summary: string }>;
+  decisions: Array<{ statement: string; source_quote: string; speaker: string }>;
+  action_items: Array<{
+    task: string;
+    owner: string;
+    due: string;
+    source_quote: string;
+    speaker: string;
+  }>;
+}
 
 export interface StreamHandlers {
   onMessage: (message: ServerMessage) => void;
@@ -119,7 +147,20 @@ export class StreamClient {
     this.send({ type: 'stop' });
   }
 
+  /** Ask for minutes over the same socket the transcript arrived on. */
+  requestMinutes(): void {
+    this.send({ type: 'minutes' });
+  }
+
+  /** Ask the server to play a scripted meeting through the real pipeline. */
+  startDemo(meeting: string, language: StartOptions['language']): void {
+    this.send({ type: 'demo', meeting, language });
+  }
+
   close(): void {
+    // Tell the server first so it can tear the session scope down cleanly,
+    // rather than discovering the disconnect from a failed write.
+    this.send({ type: 'close' });
     this.socket?.close();
     this.socket = null;
   }

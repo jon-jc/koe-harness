@@ -269,11 +269,17 @@ class StreamingSession:
 
             if result is not None and result.text:
                 stabilized = self._stabilizer.finalize(result.text)
+                # Carry through a speaker label if the backend produced one.
+                # Fused ASR+diarization backends attribute segments themselves,
+                # and dropping that here would silently discard the answer to
+                # "who said this" on every provider that already knows.
+                speaker = next((seg.speaker for seg in result.segments if seg.speaker), None)
                 segment = Segment(
                     text=stabilized.committed,
                     start=speech.start,
                     end=speech.end,
                     language=stabilized.language,
+                    speaker=speaker,
                     is_final=True,
                 )
                 self._segments.append(segment)

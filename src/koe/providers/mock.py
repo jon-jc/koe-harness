@@ -173,6 +173,12 @@ class MockASR:
     name: str = "mock-asr"
     cost_per_audio_minute_usd: float = 0.0
     word_timestamps: bool = True
+    #: Return only the utterances overlapping the audio actually handed over,
+    #: instead of the whole script. Off by default because most callers pass a
+    #: single span and want all of it; on, the mock behaves like a real ASR
+    #: during a streaming session, where each call covers one utterance and a
+    #: partial covers a prefix of one.
+    timeline: bool = False
     info: ProviderInfo = field(init=False)
     calls: int = field(default=0, init=False)
 
@@ -217,11 +223,19 @@ class MockASR:
         async with measured(self.info, usage):
             if self.latency_ms:
                 await asyncio.sleep(self.latency_ms / 1000.0)
-        return self._build(degrade=True)
+        window = (audio.offset, audio.end) if self.timeline else None
+        return self._build(degrade=True, window=window)
 
-    def _build(self, *, degrade: bool) -> Transcript:
+    def _visible(self, window: tuple[float, float] | None) -> list[ScriptedUtterance]:
+        """Utterances overlapping `window`, or all of them when unwindowed."""
+        if window is None:
+            return list(self.script)
+        start, end = window
+        return [u for u in self.script if u.end > start and u.start < end]
+
+    def _build(self, *, degrade: bool, window: tuple[float, float] | None = None) -> Transcript:
         segments: list[Segment] = []
-        for utterance in self.script:
+        for utterance in self._visible(window):
             text = (
                 _deterministic_degrade(utterance.text, self.degradation, self.name)
                 if degrade
@@ -235,6 +249,11 @@ class MockASR:
                     words=_words_for(utterance, text) if self.word_timestamps else [],
                     language=utterance.resolved_language(),
                     confidence=1.0 - self.degradation,
+                    # In timeline mode the mock stands in for the *fused* ASR x
+                    # diarization output, which is what a streaming session
+                    # consumes downstream. Unwindowed callers still get bare
+                    # segments and run attribute_speakers themselves.
+                    speaker=utterance.speaker if self.timeline else None,
                     is_final=True,
                 )
             )
