@@ -67,6 +67,12 @@ jobs:
       - name: Test
         # Live-provider tests are excluded: CI must be deterministic and free.
         run: pytest -m "not requires_keys" --cov=koe --cov-report=term-missing --cov-report=xml
+      - name: Benchmark suite smoke test
+        # Not a performance gate — CI runners are too noisy for that. This only
+        # proves the suite still imports and runs, so it cannot rot silently.
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m benchmarks --only routing
       - name: Evaluation harness smoke test
         # The harness that guards quality has to be guarded too. A clean
         # backend must score 0, and a clearly degraded one must be caught as a
