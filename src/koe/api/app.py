@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,7 +44,14 @@ from koe.minutes.demo import demo_llm
 from koe.minutes.generator import MinutesGenerator
 from koe.minutes.schema import Minutes
 from koe.pipeline.session import SessionConfig, StreamingSession
+from koe.providers.credentials import (
+    PROVIDERS_BY_ID,
+    CredentialError,
+    CredentialStore,
+    Source,
+)
 from koe.providers.mock import MEETING_JA, MockASR, MockDiarization
+from koe.providers.verify import verify as verify_credential
 from koe.routing.budget import Budget, Priority
 from koe.routing.router import Router
 from koe.telemetry.ledger import BudgetExceeded, CostLedger
@@ -74,6 +81,7 @@ class Services:
     llm: Any
     diarizer: Any
     settings: Settings = field(default_factory=get_settings)
+    credentials: CredentialStore = field(default_factory=CredentialStore)
     ledger: CostLedger = field(default_factory=CostLedger)
     metrics: Metrics = field(default_factory=lambda: METRICS)
     #: Bounds concurrent streaming sessions. Each holds an audio buffer and a
@@ -88,8 +96,53 @@ class Services:
 
     def __post_init__(self) -> None:
         self._sessions = asyncio.Semaphore(self.settings.max_concurrent_sessions)
+        self.refresh_llm()
         self._idle = asyncio.Event()
         self._idle.set()
+
+    def refresh_llm(self) -> str:
+        """Point the LLM service at whichever credential is configured.
+
+        Called at startup and again whenever a key is added or removed, so a
+        user who pastes a key gets the real model on their next request rather
+        than after a restart. Registering through the context rather than only
+        assigning the attribute is what lets dependent plugins rebuild against
+        the new client — the reason the kernel tracks services reactively.
+        """
+        chosen = "mock"
+        provider: Any = demo_llm()
+
+        if not self.settings.force_mock_providers:
+            # A key alone is not enough: the vendor SDK is an optional
+            # dependency, and selecting a backend this build cannot import
+            # would show "openai" in the UI and then fail on the first
+            # request. Better to stay on the mock and say why.
+            for candidate in ("anthropic", "openai"):
+                spec = PROVIDERS_BY_ID[candidate]
+                key = self.credentials.resolve(candidate)
+                if not key:
+                    continue
+                if not spec.available:
+                    logger.warning(
+                        "credential present but client library missing",
+                        extra={"provider": candidate, "client_module": spec.client_module},
+                    )
+                    continue
+                if candidate == "anthropic":
+                    from koe.providers.llm.anthropic import AnthropicLLM
+
+                    provider = AnthropicLLM(api_key=key, model=self.settings.llm_model)
+                else:
+                    from koe.providers.llm.openai import OpenAILLM
+
+                    provider = OpenAILLM(api_key=key)
+                chosen = candidate
+                break
+
+        self.llm = provider
+        self.ctx.provide("llm", provider, replace=True)
+        logger.info("llm provider selected", extra={"provider": chosen})
+        return chosen
 
     @contextlib.asynccontextmanager
     async def session_slot(self) -> AsyncIterator[bool]:
@@ -183,6 +236,16 @@ class TranscriptResponse(BaseModel):
     fell_back: bool = False
     cost_usd: float = 0.0
     latency_ms: float = 0.0
+
+
+class CredentialRequest(BaseModel):
+    """A key being stored.
+
+    `repr=False` on the field keeps the secret out of pydantic's repr, which is
+    what ends up in a validation error and therefore in a log line.
+    """
+
+    key: str = Field(min_length=8, max_length=512, repr=False)
 
 
 class MinutesRequest(BaseModel):
@@ -322,6 +385,74 @@ def build_router(services: Services) -> APIRouter:
             cost_usd=result.decision.ranked[0].info.estimate_audio_cost(seconds),
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
+
+    @router.get("/v1/credentials")
+    async def list_credentials() -> JSONResponse:
+        """Configured providers, with fingerprints rather than keys."""
+        return JSONResponse(
+            {
+                "providers": [info.to_dict() for info in services.credentials.describe_all()],
+                "active_llm": getattr(services.llm, "name", "mock"),
+                "forced_mock": services.settings.force_mock_providers,
+            }
+        )
+
+    @router.put("/v1/credentials/{provider}")
+    async def set_credential(provider: str, request: CredentialRequest) -> JSONResponse:
+        """Store a key and re-point the LLM service at it."""
+        spec = PROVIDERS_BY_ID.get(provider)
+        if spec is None:
+            raise HTTPException(status_code=404, detail=f"unknown provider {provider!r}")
+        if services.credentials.source_of(provider) is Source.ENVIRONMENT:
+            # Refusing loudly beats writing a value that will never be read.
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": (
+                        f"{spec.label} is configured through {spec.env_var}; "
+                        "the environment takes precedence over stored keys"
+                    ),
+                    "code": "env_managed",
+                    "context": {"label": spec.label, "env": spec.env_var},
+                },
+            )
+        try:
+            info = services.credentials.set(provider, request.key)
+        except CredentialError as exc:
+            # A code alongside the message, so the bilingual client can say
+            # this in the reader's language instead of matching English prose.
+            return JSONResponse(
+                status_code=422,
+                content={"detail": str(exc), "code": exc.code, "context": exc.context},
+            )
+
+        active = services.refresh_llm()
+        services.metrics.increment("credentials.saved")
+        return JSONResponse({"provider": info.to_dict(), "active_llm": active})
+
+    @router.delete("/v1/credentials/{provider}")
+    async def delete_credential(provider: str) -> JSONResponse:
+        if provider not in PROVIDERS_BY_ID:
+            raise HTTPException(status_code=404, detail=f"unknown provider {provider!r}")
+        info = services.credentials.delete(provider)
+        active = services.refresh_llm()
+        return JSONResponse({"provider": info.to_dict(), "active_llm": active})
+
+    @router.post("/v1/credentials/{provider}/verify")
+    async def verify_credential_route(provider: str) -> JSONResponse:
+        """Check a key against the live API.
+
+        Separate from saving because verification costs a request, and a save
+        that silently spends money is a surprise.
+        """
+        if provider not in PROVIDERS_BY_ID:
+            raise HTTPException(status_code=404, detail=f"unknown provider {provider!r}")
+        result = await verify_credential(provider, services.credentials)
+        info = services.credentials.record_verification(
+            provider, result.status, result.detail, result.code
+        )
+        services.metrics.increment(f"credentials.verify.{result.status.value}")
+        return JSONResponse({"provider": info.to_dict()})
 
     @router.post("/v1/minutes", response_model=MinutesResponse)
     async def minutes(request: MinutesRequest) -> MinutesResponse:

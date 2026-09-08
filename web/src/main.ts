@@ -14,7 +14,8 @@
  *     from.** That is the groundedness mechanism made tangible: a citation is
  *     not an assertion about the transcript, it points at a piece of it.
  *   - The routing panel shows which backend was chosen and why, including the
- *     ones that were rejected and for what reason.
+ *     ones that were rejected and for what reason — and which model is
+ *     actually answering right now, with the way to change it one click away.
  *
  * Rendering is hand-written DOM rather than a framework, and the hot paths
  * (level meter, canvases) bypass application state entirely — see `state.ts`
@@ -24,7 +25,9 @@
 import "./styles.css";
 
 import { MicrophoneCapture } from "./audio";
+import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
+import { SettingsDialog, ShortcutsDialog } from "./settings";
 import {
   INITIAL,
   Store,
@@ -36,32 +39,10 @@ import {
   type Utterance,
 } from "./state";
 import { StreamClient, type MinutesPayload, type ServerMessage } from "./stream-client";
+import { Notifications } from "./toast";
 import { LevelStrip, SpeakerTimeline } from "./viz";
 
 /* ------------------------------------------------------------------ utils */
-
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string> = {},
-  ...children: Array<Node | string>
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (key === "class") node.className = value;
-    else if (key === "text") node.textContent = value;
-    else node.setAttribute(key, value);
-  }
-  for (const child of children) {
-    node.append(typeof child === "string" ? document.createTextNode(child) : child);
-  }
-  return node;
-}
-
-function el<T extends HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) throw new Error(`missing #${id}`);
-  return node as T;
-}
 
 /**
  * Loose normalization for citation matching.
@@ -100,10 +81,66 @@ function findCitation(utterances: readonly Utterance[], quote: string): Citation
   return null;
 }
 
+/**
+ * Search folding: width and case, nothing else.
+ *
+ * Deliberately weaker than `loose` — a searcher who types a punctuation mark
+ * means it, whereas a citation is machine-generated and only has to be
+ * *found*. Width folding stays because ＡＢＣ and ABC are the same query to
+ * everyone except a computer, and Japanese input methods produce both.
+ */
+function fold(text: string): string {
+  return text.normalize("NFKC").toLowerCase();
+}
+
+function matchesQuery(utterance: Utterance, folded: string): boolean {
+  return (
+    fold(utterance.text).includes(folded) || fold(utterance.speaker).includes(folded)
+  );
+}
+
+/**
+ * Append `text` to `host`, wrapping occurrences of `needle` in `<mark>`.
+ *
+ * Positions are taken from a plain lowercase fold rather than NFKC, because
+ * NFKC can change string *length* and the offsets would then point at the
+ * wrong characters. When lowering does change the length — a handful of
+ * locale-specific characters do — the highlight is skipped rather than
+ * misplaced. The line is still shown; it is only less decorated.
+ */
+function appendHighlighted(host: HTMLElement, text: string, needle: string): void {
+  const hay = text.toLowerCase();
+  const pin = needle.toLowerCase();
+  if (!pin || hay.length !== text.length || !hay.includes(pin)) {
+    host.append(text);
+    return;
+  }
+  let at = 0;
+  for (;;) {
+    const found = hay.indexOf(pin, at);
+    if (found === -1) break;
+    if (found > at) host.append(text.slice(at, found));
+    host.append(h("mark", { class: "find", text: text.slice(found, found + pin.length) }));
+    at = found + pin.length;
+  }
+  if (at < text.length) host.append(text.slice(at));
+}
+
 function fmtDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** True when a keystroke belongs to whatever the user is typing into. */
+function isTyping(): boolean {
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLTextAreaElement ||
+    active instanceof HTMLSelectElement ||
+    (active instanceof HTMLElement && active.isContentEditable)
+  );
 }
 
 /* ------------------------------------------------------------------ theme */
@@ -141,7 +178,7 @@ class App {
   private theme: Theme = loadTheme();
   private tickTimer = 0;
   private startedAt = 0;
-  private toastTimer = 0;
+  private shownError: string | null = null;
   /** Demo playback is server-driven, so there is no capture to tear down. */
   private demoMode = false;
 
@@ -163,9 +200,23 @@ class App {
     asrLang: el<HTMLSelectElement>("asr-lang"),
     uiLang: el<HTMLSelectElement>("ui-lang"),
     themeBtn: el<HTMLButtonElement>("theme"),
+    settingsBtn: el<HTMLButtonElement>("settings"),
+    helpBtn: el<HTMLButtonElement>("help"),
     tabs: el<HTMLDivElement>("tabs"),
     live: el<HTMLDivElement>("live-region"),
+    search: el<HTMLDivElement>("search"),
+    searchInput: el<HTMLInputElement>("search-input"),
+    searchCount: el<HTMLSpanElement>("search-count"),
+    searchClose: el<HTMLButtonElement>("search-close"),
+    searchToggle: el<HTMLButtonElement>("search-toggle"),
+    copyTranscript: el<HTMLButtonElement>("copy-transcript"),
   };
+
+  private readonly notify = new Notifications(undefined, this.refs.live);
+  private readonly settings = new SettingsDialog(this.notify, strings(detectUILang()), () =>
+    void this.loadActiveModel(),
+  );
+  private readonly shortcuts = new ShortcutsDialog(strings(detectUILang()));
 
   constructor() {
     applyTheme(this.theme);
@@ -175,6 +226,7 @@ class App {
     this.levelStrip.render();
     this.timeline.render([], 0);
     void this.loadProviders();
+    void this.loadActiveModel();
 
     const redraw = () => {
       this.levelStrip.render();
@@ -202,6 +254,8 @@ class App {
     this.refs.uiLang.addEventListener("change", () => {
       const uiLang = this.refs.uiLang.value as UILang;
       document.documentElement.lang = uiLang;
+      this.settings.setStrings(strings(uiLang));
+      this.shortcuts.setStrings(strings(uiLang));
       this.store.set({ uiLang });
     });
 
@@ -215,26 +269,99 @@ class App {
       this.timeline.render(state.utterances, Math.max(state.durationS, 1));
     });
 
+    this.refs.settingsBtn.addEventListener("click", () => void this.settings.open());
+    this.refs.helpBtn.addEventListener("click", () => this.shortcuts.open());
+
     this.refs.tabs.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
       if (!target) return;
       this.store.set({ tab: target.dataset.tab as "minutes" | "routing" | "metrics" });
     });
 
-    // Space toggles recording, unless the user is in a control — where space
-    // means "activate this button" and stealing it would be hostile.
+    // Arrow keys move between tabs, which is what the tablist role promises
+    // and what a keyboard user will try. Without it the role is a lie.
+    this.refs.tabs.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (step === 0) return;
+      event.preventDefault();
+      const buttons = [...this.refs.tabs.querySelectorAll<HTMLButtonElement>("[data-tab]")];
+      const at = buttons.findIndex((b) => b.getAttribute("aria-selected") === "true");
+      const next = buttons[(at + step + buttons.length) % buttons.length];
+      this.store.set({ tab: next.dataset.tab as "minutes" | "routing" | "metrics" });
+      next.focus();
+    });
+
+    /* -- search ---------------------------------------------------------- */
+
+    this.refs.searchToggle.addEventListener("click", () => this.openSearch());
+    this.refs.searchClose.addEventListener("click", () => this.closeSearch());
+    this.refs.searchInput.addEventListener("input", () => {
+      this.store.set({ query: this.refs.searchInput.value });
+    });
+    this.refs.searchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        this.closeSearch();
+      }
+    });
+
+    this.refs.copyTranscript.addEventListener("click", () => void this.copyTranscript());
+
+    /* -- shortcuts ------------------------------------------------------- */
+
     document.addEventListener("keydown", (event) => {
-      const active = document.activeElement;
+      // A modal owns the keyboard while it is open; the browser already gives
+      // it Escape and a focus trap, and a global handler firing behind it
+      // would act on a surface the user cannot see.
+      if (document.querySelector("dialog[open]")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const typing = isTyping();
       const inControl =
-        active instanceof HTMLButtonElement ||
-        active instanceof HTMLSelectElement ||
-        active instanceof HTMLInputElement;
+        typing ||
+        document.activeElement instanceof HTMLButtonElement;
+
+      // Space toggles recording, unless the user is in a control — where space
+      // means "activate this button" and stealing it would be hostile.
       if (event.code === "Space" && !inControl) {
         event.preventDefault();
         void this.toggle();
+        return;
       }
-      if (event.key === "Escape") this.store.set({ selectedQuote: null });
+
+      if (event.key === "Escape") {
+        if (this.store.get().query) this.closeSearch();
+        else this.store.set({ selectedQuote: null });
+        return;
+      }
+
+      if (typing) return;
+
+      if (event.key === "/") {
+        event.preventDefault();
+        this.openSearch();
+      } else if (event.key === ",") {
+        event.preventDefault();
+        void this.settings.open();
+      } else if (event.key === "?") {
+        event.preventDefault();
+        this.shortcuts.open();
+      }
     });
+  }
+
+  private openSearch(): void {
+    this.refs.search.hidden = false;
+    this.refs.searchToggle.setAttribute("aria-expanded", "true");
+    this.refs.searchInput.focus();
+    this.refs.searchInput.select();
+  }
+
+  private closeSearch(): void {
+    this.refs.search.hidden = true;
+    this.refs.searchToggle.setAttribute("aria-expanded", "false");
+    this.refs.searchInput.value = "";
+    this.store.set({ query: "" });
   }
 
   /* ---------------------------------------------------------------- session */
@@ -420,6 +547,7 @@ class App {
         });
         // Announce finals to assistive technology; interim hypotheses would
         // make a screen reader unusable by re-reading a churning line.
+        this.refs.live.setAttribute("aria-live", "polite");
         this.refs.live.textContent = `${utterance.speaker}: ${utterance.text}`;
         break;
       }
@@ -501,6 +629,40 @@ class App {
     }
   }
 
+  /** Which LLM is answering right now — refreshed whenever a key changes. */
+  private async loadActiveModel(): Promise<void> {
+    try {
+      const response = await fetch("/v1/credentials");
+      if (!response.ok) return;
+      const body = (await response.json()) as { active_llm: string };
+      this.store.set({ activeLlm: body.active_llm });
+    } catch {
+      /* informational only — see loadProviders */
+    }
+  }
+
+  /* ---------------------------------------------------------------- copy */
+
+  private async copyTranscript(): Promise<void> {
+    const state = this.store.get();
+    if (state.utterances.length === 0) return;
+    const text = state.utterances
+      .map((u) => `[${fmtDuration(u.start)}] ${u.speaker}: ${u.text}`)
+      .join("\n");
+    this.report(await copyText(text));
+  }
+
+  private async copyMinutes(): Promise<void> {
+    const minutes = this.store.get().minutes;
+    if (!minutes) return;
+    this.report(await copyText(minutesToText(minutes, this.s)));
+  }
+
+  private report(ok: boolean): void {
+    if (ok) this.notify.ok(this.s.copied);
+    else this.notify.error(this.s.copyFailed);
+  }
+
   /* ---------------------------------------------------------------- render */
 
   private render(): void {
@@ -538,12 +700,19 @@ class App {
     this.refs.themeBtn.setAttribute("aria-label", s.theme);
 
     this.renderLabels(s);
-    this.renderTranscript(state.utterances, state.committed, state.pending, state.selectedQuote, s);
+    this.renderTranscript(s);
     this.renderSide(s);
     this.renderStats(s);
     this.timeline.render(state.utterances, Math.max(state.durationS, 1));
 
-    if (state.error) this.toast(state.error);
+    // One notification per distinct error, not one per render — the store
+    // notifies on every frame that touches it.
+    if (state.error && state.error !== this.shownError) {
+      this.shownError = state.error;
+      this.notify.error(state.error);
+    } else if (!state.error) {
+      this.shownError = null;
+    }
   }
 
   private renderLabels(s: Strings): void {
@@ -556,32 +725,55 @@ class App {
     el("t-ui-lang").textContent = s.uiLanguage;
     el("t-asr-lang").textContent = s.asrLanguage;
     el("t-tagline").textContent = s.tagline;
-    el("t-hint").innerHTML = `<kbd>Space</kbd> ${s.toggleRecord}`;
+    el("t-hint").replaceChildren(h("kbd", { text: "Space" }), ` ${s.toggleRecord}`);
+
     const auto = this.refs.asrLang.querySelector('option[value="unknown"]');
     if (auto) auto.textContent = s.auto;
+
+    this.refs.settingsBtn.title = s.settings;
+    this.refs.settingsBtn.setAttribute("aria-label", s.settings);
+    this.refs.helpBtn.title = s.shortcuts;
+    this.refs.helpBtn.setAttribute("aria-label", s.shortcuts);
+    this.refs.searchToggle.title = s.search;
+    this.refs.searchToggle.setAttribute("aria-label", s.search);
+    this.refs.searchClose.setAttribute("aria-label", s.close);
+    this.refs.copyTranscript.title = s.copyTranscript;
+    this.refs.copyTranscript.setAttribute("aria-label", s.copyTranscript);
+    this.refs.searchInput.placeholder = s.searchPlaceholder;
+    this.refs.searchInput.setAttribute("aria-label", s.searchPlaceholder);
   }
 
-  private renderTranscript(
-    utterances: readonly Utterance[],
-    committed: string,
-    pending: string,
-    selectedQuote: string | null,
-    s: Strings,
-  ): void {
+  private renderTranscript(s: Strings): void {
+    const state = this.store.get();
+    const { utterances, committed, pending, selectedQuote, query } = state;
     const host = this.refs.transcript;
     host.replaceChildren();
 
+    const needle = query.trim();
+    const folded = fold(needle);
+    const searching = needle.length > 0;
+
     if (utterances.length === 0 && !committed && !pending) {
       host.append(h("div", { class: "empty" }, h("span", { class: "k", text: "声" }), s.emptyTranscript));
+      this.refs.searchCount.textContent = "";
+      this.refs.copyTranscript.disabled = true;
       return;
     }
+    this.refs.copyTranscript.disabled = false;
 
     const citation = selectedQuote ? findCitation(utterances, selectedQuote) : null;
+    let hits = 0;
 
     utterances.forEach((utterance, index) => {
+      const hit = !searching || matchesQuery(utterance, folded);
+      if (hit && searching) hits += 1;
+
       const speaker = utterance.speaker || "—";
       const row = h("div", { class: "utt" });
       row.style.setProperty("--spk", `var(--spk-${speakerColorIndex(speaker)})`);
+      // Dimmed rather than removed: a transcript is a sequence, and dropping
+      // the misses would hide that a match sits between two other exchanges.
+      if (searching && !hit) row.classList.add("dimmed");
       if (citation?.index === index) {
         row.classList.add("cited");
         row.id = "cited-utterance";
@@ -598,6 +790,8 @@ class App {
           h("mark", { class: "hit", text: citation.raw }),
           utterance.text.slice(at + citation.raw.length),
         );
+      } else if (searching && hit) {
+        appendHighlighted(said, utterance.text, needle);
       } else {
         said.textContent = utterance.text;
       }
@@ -616,8 +810,19 @@ class App {
       host.append(row);
     }
 
-    const target = host.querySelector("#cited-utterance") ?? host.lastElementChild;
-    target?.scrollIntoView({ block: "nearest" });
+    this.refs.searchCount.textContent = searching
+      ? hits > 0
+        ? `${hits} ${hits === 1 ? s.match : s.matches}`
+        : s.noMatches
+      : "";
+
+    // Do not yank the view while someone is reading search results.
+    if (!searching) {
+      const target = host.querySelector("#cited-utterance") ?? host.lastElementChild;
+      target?.scrollIntoView({ block: "nearest" });
+    } else {
+      host.querySelector(".utt:not(.dimmed)")?.scrollIntoView({ block: "nearest" });
+    }
   }
 
   private renderSide(s: Strings): void {
@@ -626,7 +831,10 @@ class App {
     host.replaceChildren();
 
     for (const button of this.refs.tabs.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
-      button.setAttribute("aria-selected", String(button.dataset.tab === state.tab));
+      const selected = button.dataset.tab === state.tab;
+      button.setAttribute("aria-selected", String(selected));
+      // Roving tabindex: one stop for the whole tablist, arrows move within.
+      button.tabIndex = selected ? 0 : -1;
     }
 
     if (state.tab === "routing") return this.renderRouting(host, s);
@@ -657,7 +865,19 @@ class App {
     const m = state.minutes;
     const wrap = h("div", { class: "minutes" });
 
-    if (m.title) wrap.append(h("h1", { class: "ja", text: m.title }));
+    const heading = h("div", { class: "row", style: "margin-bottom:10px" });
+    if (m.title) heading.append(h("h1", { class: "ja", text: m.title, style: "margin:0" }));
+    heading.append(h("div", { style: "flex:1" }));
+    const copy = h("button", {
+      class: "icon-btn",
+      type: "button",
+      title: s.copyMinutes,
+      "aria-label": s.copyMinutes,
+      text: "⧉",
+    });
+    copy.addEventListener("click", () => void this.copyMinutes());
+    heading.append(copy);
+    wrap.append(heading);
 
     const badges = h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px" });
     badges.append(
@@ -752,14 +972,49 @@ class App {
     node.append(row);
 
     node.addEventListener("click", () => {
-      this.store.set({ selectedQuote: selected ? null : claim.quote });
+      // Selecting a citation while filtering would highlight a line the filter
+      // is hiding, so clear the filter and show the source.
+      this.store.set({ selectedQuote: selected ? null : claim.quote, query: "" });
+      if (!selected) this.closeSearch();
     });
     return node;
   }
 
   private renderRouting(host: HTMLElement, s: Strings): void {
     const state = this.store.get();
-    host.append(h("p", { class: "note", text: s.routingHint, style: "margin-bottom:14px" }));
+
+    /*
+     * The routing table explains ASR backend selection; the LLM behind the
+     * 議事録 is a separate decision, and until it was surfaced here people
+     * assumed the mock output was the model's. Naming it — and putting the
+     * way to change it one click away — is the difference between a demo and
+     * something someone can actually point at their own account.
+     */
+    const usingMock = !state.activeLlm || state.activeLlm.startsWith("mock");
+    const llm = h("div", { class: "provider" });
+    const llmHead = h("div", { class: "provider-head" });
+    llmHead.append(
+      h("span", { class: "provider-name", text: s.activeModel }),
+      h("span", {
+        class: usingMock ? "chip warn" : "chip live",
+        text: usingMock ? s.usingMock : state.activeLlm,
+      }),
+      h("div", { style: "flex:1" }),
+    );
+    const open = h("button", { class: "btn ghost", type: "button", text: s.settings });
+    open.addEventListener("click", () => void this.settings.open());
+    llmHead.append(open);
+    llm.append(llmHead);
+    llm.append(
+      h("p", {
+        class: "note",
+        style: "margin:0",
+        text: usingMock ? s.usingMockHint : s.apiKeysHint,
+      }),
+    );
+    host.append(llm);
+
+    host.append(h("p", { class: "note", text: s.routingHint, style: "margin:14px 0" }));
 
     if (state.providers.length === 0) {
       host.append(h("div", { class: "empty", text: s.noSession }));
@@ -866,21 +1121,53 @@ class App {
     if (state.framesDropped > 0) parts.push(`${state.framesDropped} ${s.framesDropped}`);
     this.refs.stats.textContent = parts.join("  ·  ");
   }
-
-  private toast(message: string): void {
-    const existing = document.querySelector(".toast");
-    existing?.remove();
-    const node = h("div", { class: "toast", role: "alert", text: message });
-    document.body.append(node);
-    window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => {
-      node.remove();
-      this.store.set({ error: null });
-    }, 5000);
-  }
 }
 
 /* ------------------------------------------------------------------ adapt */
+
+/**
+ * Minutes as plain text, for pasting into whatever the team actually uses.
+ *
+ * Markdown-shaped because Slack, Notion, Confluence and a plain mail body all
+ * degrade gracefully from it, and because action items survive as checkboxes.
+ */
+function minutesToText(m: MinutesView, s: Strings): string {
+  const lines: string[] = [];
+  if (m.title) lines.push(`# ${m.title}`, "");
+  if (m.participants.length > 0) lines.push(`${s.participants}: ${m.participants.join(", ")}`, "");
+  if (m.summary) lines.push(`## ${s.summary}`, m.summary, "");
+
+  if (m.topics.length > 0) {
+    lines.push(`## ${s.topics}`);
+    for (const topic of m.topics) lines.push(`- **${topic.title}** — ${topic.summary}`);
+    lines.push("");
+  }
+
+  const decisions = m.claims.filter((c) => c.kind === "decision");
+  if (decisions.length > 0) {
+    lines.push(`## ${s.decisions}`);
+    for (const claim of decisions) {
+      lines.push(`- ${claim.text}${claim.speaker ? ` (${claim.speaker})` : ""}`);
+    }
+    lines.push("");
+  }
+
+  const actions = m.claims.filter((c) => c.kind === "action");
+  if (actions.length > 0) {
+    lines.push(`## ${s.actions}`);
+    for (const claim of actions) {
+      const owner = claim.owner || s.unassigned;
+      const due = claim.due ? ` · ${s.due}: ${claim.due}` : "";
+      lines.push(`- [ ] ${claim.text} — ${owner}${due}`);
+    }
+    lines.push("");
+  }
+
+  // The provenance line is the point of the whole feature: whoever receives
+  // this should know how much of it was checked against the transcript.
+  lines.push(`_${s.verified} ${m.grounded}/${m.totalClaims} ${s.claims}_`);
+  return lines.join("\n");
+}
 
 function toMinutesView(
   payload: MinutesPayload,

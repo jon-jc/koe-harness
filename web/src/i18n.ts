@@ -78,6 +78,60 @@ export interface Strings {
   readonly level: string;
   readonly activity: string;
   readonly speakers: string;
+  readonly settings: string;
+  readonly providers: string;
+  readonly apiKeys: string;
+  readonly apiKeysHint: string;
+  readonly save: string;
+  readonly test: string;
+  readonly remove: string;
+  readonly close: string;
+  readonly testing: string;
+  readonly saved: string;
+  readonly removed: string;
+  readonly notConfigured: string;
+  readonly fromEnvironment: string;
+  readonly fromEnvironmentHint: string;
+  readonly getKey: string;
+  readonly keyPlaceholder: string;
+  readonly activeModel: string;
+  readonly usingMock: string;
+  readonly usingMockHint: string;
+  readonly storageNote: string;
+  readonly statusValid: string;
+  readonly statusInvalid: string;
+  readonly statusError: string;
+  readonly statusUnknown: string;
+  readonly search: string;
+  readonly searchPlaceholder: string;
+  readonly matches: string;
+  /** Singular counter; Japanese uses the same counter for both. */
+  readonly match: string;
+  readonly noMatches: string;
+  readonly copy: string;
+  readonly copied: string;
+  readonly copyFailed: string;
+  readonly copyTranscript: string;
+  readonly copyMinutes: string;
+  readonly shortcutSearch: string;
+  readonly shortcutSettings: string;
+  readonly shortcutHelp: string;
+  readonly shortcutClose: string;
+  readonly dismiss: string;
+  /** Server rejection codes, rendered locally. `{label}` / `{prefix}` /
+   *  `{env}` are substituted from the response's `context`. */
+  readonly errBadPrefix: string;
+  readonly errEmptyKey: string;
+  readonly errEnvManaged: string;
+  readonly sdkMissing: string;
+  readonly sdkMissingHint: string;
+  /** Verification outcomes, keyed by the server's result code. */
+  readonly vNoKey: string;
+  readonly vAccepted: string;
+  readonly vRejected: string;
+  readonly vNoPermission: string;
+  readonly vRateLimited: string;
+  readonly vUnreachable: string;
 }
 
 const JA: Strings = {
@@ -129,7 +183,7 @@ const JA: Strings = {
   uiLanguage: "表示言語",
   asrLanguage: "認識言語",
   auto: "自動判定",
-  shortcuts: "ショートカット",
+  shortcuts: "キーボードショートカット",
   toggleRecord: "録音の開始・停止",
   provider: "プロバイダ",
   score: "スコア",
@@ -145,6 +199,58 @@ const JA: Strings = {
   level: "入力レベル",
   activity: "音声区間",
   speakers: "話者",
+  settings: "設定",
+  providers: "プロバイダ",
+  apiKeys: "APIキー",
+  apiKeysHint: "キーを登録すると、次のリクエストから実際のモデルが使われます。再起動は不要です。",
+  save: "保存",
+  test: "接続テスト",
+  remove: "削除",
+  close: "閉じる",
+  testing: "テスト中…",
+  saved: "保存しました",
+  removed: "削除しました",
+  notConfigured: "未設定",
+  fromEnvironment: "環境変数",
+  fromEnvironmentHint: "環境変数が優先されるため、ここからは変更できません。",
+  getKey: "キーを取得",
+  keyPlaceholder: "キーを貼り付け",
+  activeModel: "使用中のモデル",
+  usingMock: "モック",
+  usingMockHint: "キーが未設定のため、決定論的なモックで動作しています。",
+  storageNote:
+    "キーはこの端末にのみ保存されます (Windows では DPAPI で暗号化)。表示されるのは末尾4文字のみです。",
+  statusValid: "有効",
+  statusInvalid: "無効",
+  statusError: "エラー",
+  statusUnknown: "未確認",
+  search: "検索",
+  searchPlaceholder: "文字起こしを検索",
+  matches: "件",
+  match: "件",
+  noMatches: "該当なし",
+  copy: "コピー",
+  copied: "コピーしました",
+  copyFailed: "コピーできませんでした",
+  copyTranscript: "文字起こしをコピー",
+  copyMinutes: "議事録をコピー",
+  shortcutSearch: "文字起こしを検索",
+  shortcutSettings: "設定を開く",
+  shortcutHelp: "このヘルプ",
+  shortcutClose: "閉じる / 選択解除",
+  dismiss: "閉じる",
+  errBadPrefix: "{label} のキーは {prefix} で始まります。貼り付けた内容をご確認ください。",
+  errEmptyKey: "キーを入力してください。",
+  errEnvManaged: "{env} で設定されているため、ここからは変更できません。",
+  vNoKey: "キーが設定されていません。",
+  vAccepted: "接続できました。",
+  vRejected: "キーが拒否されました。",
+  vNoPermission: "キーは有効ですが、このモデルへの権限がありません。",
+  vRateLimited: "レート制限中ですが、キーは受理されました。",
+  vUnreachable: "接続できませんでした。ネットワークをご確認ください。",
+  sdkMissing: "ライブラリ未導入",
+  sdkMissingHint:
+    "このビルドにはクライアントライブラリが含まれていないため、キーがあってもモックのままです。pip install 'koe-harness[llm]' を実行してください。",
 };
 
 const EN: Strings = {
@@ -196,7 +302,7 @@ const EN: Strings = {
   uiLanguage: "Interface",
   asrLanguage: "Recognition",
   auto: "Auto",
-  shortcuts: "Shortcuts",
+  shortcuts: "Keyboard shortcuts",
   toggleRecord: "start / stop recording",
   provider: "provider",
   score: "score",
@@ -212,6 +318,58 @@ const EN: Strings = {
   level: "input level",
   activity: "voice activity",
   speakers: "speakers",
+  settings: "Settings",
+  providers: "Providers",
+  apiKeys: "API keys",
+  apiKeysHint: "Add a key and the real model is used from your next request. No restart needed.",
+  save: "Save",
+  test: "Test",
+  remove: "Remove",
+  close: "Close",
+  testing: "Testing…",
+  saved: "Saved",
+  removed: "Removed",
+  notConfigured: "not configured",
+  fromEnvironment: "environment",
+  fromEnvironmentHint: "Set by an environment variable, which takes precedence, so it cannot be edited here.",
+  getKey: "Get a key",
+  keyPlaceholder: "Paste key",
+  activeModel: "Active model",
+  usingMock: "mock",
+  usingMockHint: "No key configured, so deterministic mocks are in use.",
+  storageNote:
+    "Keys are stored on this machine only (encrypted with DPAPI on Windows). Only the last four characters are ever shown.",
+  statusValid: "valid",
+  statusInvalid: "invalid",
+  statusError: "error",
+  statusUnknown: "unverified",
+  search: "Search",
+  searchPlaceholder: "Search the transcript",
+  matches: "matches",
+  match: "match",
+  noMatches: "no matches",
+  copy: "Copy",
+  copied: "Copied",
+  copyFailed: "Could not copy",
+  copyTranscript: "Copy transcript",
+  copyMinutes: "Copy minutes",
+  shortcutSearch: "search the transcript",
+  shortcutSettings: "open settings",
+  shortcutHelp: "this help",
+  shortcutClose: "close / clear selection",
+  dismiss: "Dismiss",
+  errBadPrefix: "{label} keys start with {prefix} — check what you pasted.",
+  errEmptyKey: "Enter a key.",
+  errEnvManaged: "Set by {env}, so it cannot be changed here.",
+  vNoKey: "No key configured.",
+  vAccepted: "Connected.",
+  vRejected: "The key was rejected.",
+  vNoPermission: "The key is valid but lacks permission for this model.",
+  vRateLimited: "Rate limited, but the key is accepted.",
+  vUnreachable: "Could not reach the provider — check your network.",
+  sdkMissing: "library missing",
+  sdkMissingHint:
+    "This build has no client library for it, so the mock stays in use even with a key. Install it with pip install 'koe-harness[llm]'.",
 };
 
 export function strings(lang: UILang): Strings {
