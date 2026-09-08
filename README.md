@@ -4,13 +4,12 @@
 an LLM writing 議事録 (meeting minutes), orchestrated behind one plugin kernel and
 held to explicit **latency, cost and quality budgets**.
 
-> 音声認識・話者分離・LLM を組み合わせて音声プロダクトを構築するためのハーネスです。
-> レイテンシ・コスト・品質のトレードオフを暗黙にせず、明示的に管理・計測します。
+English · [日本語](README.ja.md)
 
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![400 tests](https://img.shields.io/badge/tests-400-brightgreen)
+![413 tests](https://img.shields.io/badge/tests-413-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -349,6 +348,18 @@ pins the contract by forcing each backend explicitly.
 CI also smoke-tests the evaluation harness itself: a clean backend must score 0,
 and a degraded one must be caught as a significant regression. The harness that
 guards quality needs guarding too.
+
+---
+
+## Documentation
+
+| Document | |
+|---|---|
+| [Architecture](docs/architecture.md) | The decisions where an alternative was seriously considered and rejected, with the reason |
+| [Privacy & data handling](SAFETY.md) · [日本語](SAFETY.ja.md) | What touches audio, what is retained, third-party exposure, APPI |
+| [Benchmarks](BENCHMARK.md) | How performance is measured, and the numbers |
+| [Contributing](CONTRIBUTING.md) | Setup, conventions, and what reviewers look for |
+| [Third-party notices](THIRD_PARTY_NOTICES.md) | Dependencies and prior art |
 
 ---
 
