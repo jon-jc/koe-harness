@@ -9,6 +9,7 @@ depends on is correct.
 from __future__ import annotations
 
 import asyncio
+from itertools import pairwise
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,7 +42,7 @@ def test_retiming_opens_gaps_the_endpointer_can_act_on() -> None:
 
     retimed = retime(original)
 
-    gaps = [b.start - a.end for a, b in zip(retimed, retimed[1:], strict=False)]
+    gaps = [b.start - a.end for a, b in pairwise(retimed)]
     assert all(gap >= 0.9 for gap in gaps), gaps
 
 
