@@ -35,12 +35,24 @@ jobs:
         run: mypy
 
   test:
-    name: tests (py${{ matrix.python-version }})
+    # Japanese tokenization is an optional dependency, so the suite runs both
+    # with and without MeCab. Without this split, a normalization bug can
+    # reproduce on a developer machine and not in CI (or the reverse) purely
+    # because of which extras happened to be installed.
+    name: tests (py${{ matrix.python-version }}, ${{ matrix.label }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
+        extras: ["dev", "dev,ja"]
+        # `include` only attaches these labels to combinations it matches on
+        # `extras`; it does not create new ones.
+        include:
+          - extras: "dev"
+            label: "no-mecab"
+          - extras: "dev,ja"
+            label: "mecab"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,12 +61,14 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[${{ matrix.extras }}]"
+      - name: Report Japanese backend
+        run: python -c "from koe.text import mecab_available; print('mecab_available:', mecab_available())"
       - name: Test
         # Live-provider tests are excluded: CI must be deterministic and free.
         run: pytest -m "not requires_keys" --cov=koe --cov-report=term-missing --cov-report=xml
       - name: Upload coverage
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && matrix.extras == 'dev,ja'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
