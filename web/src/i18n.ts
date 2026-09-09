@@ -156,6 +156,9 @@ export interface Strings {
   readonly terminalNoPty: string;
   readonly terminalEmulatorFailed: string;
   readonly language: string;
+  readonly paletteSearch: string;
+  readonly paletteHint: string;
+  readonly shortcutWorkspace: string;
   /* -- settings panel ------------------------------------------- */
   readonly secAudio: string;
   readonly secRecognition: string;
@@ -329,6 +332,9 @@ const JA: Strings = {
   shortcutHelp: "このヘルプ",
   shortcutClose: "閉じる / 選択解除",
   dismiss: "閉じる",
+  shortcutWorkspace: "ワークスペースの切り替え",
+  paletteSearch: "コマンドを検索…",
+  paletteHint: "↑↓ で移動 · Enter で実行 · Esc で閉じる",
   terminalInteractive: "対話",
   terminalPlain: "簡易",
   terminalModeHint: "対話モードは本物の端末です。vim や top も動作します。簡易モードは装飾のないテキストで、アシスタントが見るものと同じです。",
@@ -537,6 +543,9 @@ const EN: Strings = {
   shortcutHelp: "this help",
   shortcutClose: "close / clear selection",
   dismiss: "Dismiss",
+  shortcutWorkspace: "switch workspace",
+  paletteSearch: "Search commands…",
+  paletteHint: "↑↓ to move · Enter to run · Esc to close",
   terminalInteractive: "Interactive",
   terminalPlain: "Plain",
   terminalModeHint: "Interactive is a real terminal — vim and top work in it. Plain is undecorated text, and is what the assistant sees.",

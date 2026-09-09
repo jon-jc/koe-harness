@@ -2101,3 +2101,103 @@ mark.find {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
+
+/* ---------------------------------------------------------------- palette */
+
+/*
+ * Anchored near the top rather than centred. A palette grows downward as it
+ * filters, and a centred one moves its own first row every keystroke — so the
+ * thing you are aiming at shifts while you type.
+ */
+.modal.palette {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(60dvh, 520px);
+  margin-block-start: 12vh;
+  padding: 0;
+}
+
+.modal.palette[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.palette-head {
+  flex: none;
+  padding: calc(var(--step) * 3);
+  border-block-end: 1px solid var(--border);
+}
+
+.palette-input {
+  width: 100%;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-ja);
+  font-size: 15px;
+}
+
+.palette-input::placeholder {
+  color: var(--text-3);
+}
+
+.palette-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--step) * 1.5);
+}
+
+.palette-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * One selection, driven by both keyboard and mouse. Using :hover as a second
+ * highlight would show two rows as selected and leave Enter's target
+ * ambiguous, so hovering moves the real selection instead.
+ */
+.palette-item.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.palette-label {
+  font-weight: 500;
+}
+
+.palette-group {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.palette-item kbd {
+  font-size: 10px;
+}
+
+.palette-empty {
+  padding: calc(var(--step) * 4);
+  text-align: center;
+}
+
+.palette-foot {
+  flex: none;
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-block-start: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 11px;
+}

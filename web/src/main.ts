@@ -35,6 +35,7 @@ import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
 import { ChatPanel } from "./panels/chat";
 import { CodePanel } from "./panels/code";
+import { CommandPalette, type Command } from "./palette";
 import { PtyPanel } from "./panels/pty";
 import { TerminalPanel } from "./panels/terminal";
 import * as prefs from "./prefs";
@@ -247,6 +248,9 @@ class App {
     this.settingsHost(),
   );
   private readonly shortcuts = new ShortcutsDialog(strings(detectUILang()));
+  private readonly palette = new CommandPalette(strings(detectUILang()), () =>
+    this.store.get().uiLang,
+  );
 
   constructor() {
     applyTheme(this.theme);
@@ -301,10 +305,7 @@ class App {
       if (target) this.setTerminalMode(target.dataset.mode as "pty" | "plain");
     });
 
-    this.refs.themeBtn.addEventListener("click", () => {
-      const order: Theme[] = ["system", "light", "dark"];
-      this.applyThemeChoice(order[(order.indexOf(this.theme) + 1) % order.length]);
-    });
+    this.refs.themeBtn.addEventListener("click", () => this.cycleTheme());
 
     this.refs.rail.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
@@ -368,7 +369,23 @@ class App {
       // it Escape and a focus trap, and a global handler firing behind it
       // would act on a surface the user cannot see.
       if (document.querySelector("dialog[open]")) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Checked before the typing guard and before the modifier guard: a
+      // palette people can only reach with the caret outside a text field is
+      // one they stop reaching for.
+      if (event.key === "k" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        this.palette.show();
+        return;
+      }
+
+      // Ctrl+1..4 jump between workspaces, the convention every tabbed
+      // application already taught people.
+      if ((event.ctrlKey || event.metaKey) && /^[1-4]$/.test(event.key)) {
+        event.preventDefault();
+        this.show(WORKSPACES[Number(event.key) - 1]);
+        return;
+      }
 
       const typing = isTyping();
       const inControl =
@@ -389,11 +406,14 @@ class App {
         return;
       }
 
-      if (typing) return;
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
 
       if (event.key === "/") {
         event.preventDefault();
         this.openSearch();
+      } else if (event.key === "k" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        this.palette.show();
       } else if (event.key === ",") {
         event.preventDefault();
         void this.settings.open();
@@ -581,6 +601,44 @@ class App {
     } catch {
       /* the panel falls back to plain, which always works */
     }
+  }
+
+  /**
+   * Everything the palette can do.
+   *
+   * Rebuilt whenever the language changes rather than held: a command's label
+   * is part of it, and a stale list is a palette that answers in the language
+   * the app is no longer in.
+   */
+  private buildCommands(): void {
+    const go = (view: WorkspaceView) => () => this.show(view);
+    const commands: Command[] = [
+      { id: "meeting", ja: "議事録を開く", en: "Go to Meeting", group: "workspace", hint: "Ctrl+1", run: go("meeting") },
+      { id: "chat", ja: "チャットを開く", en: "Go to Chat", group: "workspace", hint: "Ctrl+2", run: go("chat") },
+      { id: "terminal", ja: "端末を開く", en: "Go to Terminal", group: "workspace", hint: "Ctrl+3", run: go("terminal") },
+      { id: "code", ja: "コードを開く", en: "Go to Code", group: "workspace", hint: "Ctrl+4", run: go("code") },
+
+      { id: "record", ja: "録音の開始・停止", en: "Start or stop recording", group: "meeting", hint: "Space", run: () => void this.toggle() },
+      { id: "demo", ja: "デモを再生", en: "Play the demo meeting", group: "meeting", run: () => void this.startDemo() },
+      { id: "minutes", ja: "議事録を作成", en: "Generate minutes", group: "meeting", run: () => this.requestMinutes() },
+      { id: "copy-transcript", ja: "文字起こしをコピー", en: "Copy the transcript", group: "meeting", run: () => void this.copyTranscript() },
+      { id: "copy-minutes", ja: "議事録をコピー", en: "Copy the minutes", group: "meeting", run: () => void this.copyMinutes() },
+      { id: "search", ja: "文字起こしを検索", en: "Search the transcript", group: "meeting", hint: "/", run: () => this.openSearch() },
+
+      { id: "settings", ja: "設定を開く", en: "Open settings", group: "app", hint: ",", run: () => void this.settings.open() },
+      { id: "plugins", ja: "プラグイン", en: "Plugins", group: "app", run: () => void this.settings.open("plugins") },
+      { id: "models", ja: "APIキー", en: "API keys", group: "app", run: () => void this.settings.open("models") },
+      { id: "audio", ja: "音声設定", en: "Audio settings", group: "app", run: () => void this.settings.open("audio") },
+      { id: "theme", ja: "テーマを切り替え", en: "Toggle theme", group: "app", run: () => this.cycleTheme() },
+      { id: "language", ja: "English に切り替え", en: "日本語に切り替え", group: "app", run: () => this.setLanguage(this.store.get().uiLang === "ja" ? "en" : "ja") },
+      { id: "shortcuts", ja: "ショートカット一覧", en: "Keyboard shortcuts", group: "app", hint: "?", run: () => this.shortcuts.open() },
+    ];
+    this.palette.register(commands);
+  }
+
+  private cycleTheme(): void {
+    const order: Theme[] = ["system", "light", "dark"];
+    this.applyThemeChoice(order[(order.indexOf(this.theme) + 1) % order.length]);
   }
 
   /* ---------------------------------------------------------------- session */
@@ -1000,6 +1058,8 @@ class App {
       const label = el(`rail-${name}`).querySelector(".rail-label");
       if (label) label.textContent = railLabels[name];
     }
+    this.palette.setStrings(s);
+    this.buildCommands();
     this.chat?.setStrings(s);
     this.terminal?.setStrings(s);
     this.pty?.setStrings(s);
