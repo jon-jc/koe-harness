@@ -64,6 +64,27 @@ dropped 1 unsupported claim(s):
 That last line is the point of the whole LLM layer. See
 [Hallucination detection](#hallucination-detection-that-is-a-string-operation).
 
+### The vocabulary
+
+Every recognizer is wrong about the same class of word: the ones specific to the
+people using it. Colleagues' names, the product, the internal acronym. No amount
+of provider-switching fixes that, because the information is not in any model.
+
+Settings → Vocabulary is a plain text list, stored at `vocabulary.txt` in the
+config directory so it can live in a dotfiles repository:
+
+```
+山本
+経営会議 => 取締役会
+KPI
+```
+
+A line with an arrow corrects the transcript; a line without one registers a
+term to bias the recognizer toward. Matching changes strategy by script — Latin
+terms match at word boundaries so a rule for "koe" does not fire inside
+"invoke", and Japanese terms match as substrings, because `\b` is defined on
+`\w` and there is no boundary between two kanji for it to find.
+
 ---
 
 ## Architecture
@@ -475,6 +496,13 @@ Python and specialized for a realtime audio domain.
 
 Partial stabilization uses **LocalAgreement**, as described by Macháček et al.
 and used in `whisper_streaming`.
+
+Three pieces of the dictation workflow — the spacing rules for scripts that do
+not separate words, the ordering that strips reasoning-model scratchpads, and
+the user vocabulary — are adapted from
+[OpenWhispr](https://github.com/OpenWhispr/openwhispr). See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for what was taken and where
+koe departs from it.
 
 ## License
 

@@ -47,6 +47,7 @@ from koe.minutes.generator import MinutesGenerator
 from koe.minutes.schema import Minutes
 from koe.pipeline.session import SessionConfig, StreamingSession
 from koe.pipeline.vad import VADConfig
+from koe.pipeline.vocabulary import user_vocabulary
 from koe.plugins import PluginManager
 from koe.providers.credentials import (
     PROVIDERS_BY_ID,
@@ -179,6 +180,15 @@ class Services:
             inject=("tools",),
         )
         self.plugins.add_builtin(
+            "user-vocabulary",
+            user_vocabulary,
+            description=(
+                "Corrects names, acronyms and product words the recognizer has "
+                "no way to know, from an editable word list. Turning this off "
+                "leaves transcripts exactly as the provider returned them."
+            ),
+        )
+        self.plugins.add_builtin(
             "terminal",
             terminal_plugin,
             description=(
@@ -295,6 +305,17 @@ class Services:
 # --------------------------------------------------------------------------
 # schemas
 # --------------------------------------------------------------------------
+
+
+class VocabularyUpdate(BaseModel):
+    """The user's word list, in the import format.
+
+    One field rather than a structured list of entries: the format is designed
+    to be typed and pasted, and round-tripping it through JSON objects would
+    make the editable thing and the stored thing two different things.
+    """
+
+    text: str = Field(default="", max_length=100_000)
 
 
 class ChatRequest(BaseModel):
@@ -584,6 +605,38 @@ def build_router(services: Services) -> APIRouter:
     async def list_plugins() -> JSONResponse:
         """Everything mounted on the kernel, first-party tools included."""
         return JSONResponse(services.plugins.to_dict())
+
+    # -------------------------------------------------------------- vocabulary
+
+    def _vocabulary_payload(store: Any) -> dict[str, Any]:
+        if store is None:
+            # The plugin is off. Reported rather than 404'd: the client wants to
+            # show the panel with an explanation, and a missing endpoint and a
+            # disabled feature are different things.
+            return {"enabled": False, "text": "", "entries": 0, "terms": []}
+        return {
+            "enabled": True,
+            "text": store.text(),
+            "entries": len(store),
+            "terms": list(store.terms),
+        }
+
+    @router.get("/v1/vocabulary")
+    async def get_vocabulary() -> JSONResponse:
+        """The user's word list."""
+        return JSONResponse(_vocabulary_payload(services.ctx.get("vocabulary")))
+
+    @router.put("/v1/vocabulary")
+    async def put_vocabulary(request: VocabularyUpdate) -> JSONResponse:
+        """Replace the word list. Takes effect on the next utterance."""
+        store = services.ctx.get("vocabulary")
+        if store is None:
+            raise HTTPException(status_code=409, detail="the user-vocabulary plugin is disabled")
+        try:
+            store.save(request.text)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"could not save: {exc}") from exc
+        return JSONResponse(_vocabulary_payload(store))
 
     @router.put("/v1/plugins/{name}")
     async def set_plugin_enabled(name: str, request: PluginToggle) -> JSONResponse:

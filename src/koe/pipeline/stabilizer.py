@@ -31,11 +31,25 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from koe.text.script import Language, primary_language
+from koe.text.spacing import join_tokens
 from koe.text.tokenize import surfaces, tokenizer_for
 
 
 def _join(tokens: list[str], language: Language) -> str:
-    return "".join(tokens) if language is not Language.EN else " ".join(tokens)
+    """Rejoin tokens, spacing each seam by the scripts that meet at it.
+
+    One rule per *seam*, not one per language. A Japanese utterance containing
+    an English phrase -- which is most of them in a Japanese office -- needs the
+    space inside "KPI dashboard" and no space around の, and a per-language rule
+    can deliver only one of those. Joining a Japanese utterance with "" is what
+    turned the vocabulary correction "KPI dashboard" into "KPIdashboard" the
+    first time one ran.
+
+    `language` is now only a tiebreak for the case the seam cannot settle
+    itself: two Latin tokens inside otherwise Japanese text still take a space,
+    because they are English words wherever they appear.
+    """
+    return join_tokens(tokens, language)
 
 
 @dataclass(frozen=True, slots=True)

@@ -13,6 +13,7 @@ from koe.kernel.context import Context
 from koe.pipeline.session import PartialEvent, SessionConfig, StreamingSession
 from koe.pipeline.stabilizer import Stabilizer, common_prefix
 from koe.pipeline.vad import MIN_RELEASE_DB, VAD, SpeechState, VADConfig, frame_energy_db
+from koe.pipeline.vocabulary import VocabularyStore
 from koe.providers.mock import MEETING_JA, MockASR
 from koe.text.script import Language
 
@@ -430,6 +431,58 @@ async def test_a_session_produces_final_segments_and_events() -> None:
     assert "asr.final" in events
     assert "session.end" in events
     assert session.transcript().final_segments
+
+
+async def test_the_user_vocabulary_corrects_a_final_segment() -> None:
+    """The wiring, end to end: a rule in the store reaches the transcript."""
+    ctx = Context()
+    store = VocabularyStore()
+    store.save("第三四半期 => Q3")
+    ctx.provide("vocabulary", store, replace=True)
+
+    session = StreamingSession(
+        ctx,
+        MockASR(script=MEETING_JA[:1], degradation=0.0),
+        config=SessionConfig(
+            language=Language.JA,
+            emit_partials=False,
+            vad=VADConfig(silence_to_end_ms=300.0),
+        ),
+    )
+
+    async with session:
+        await session.push_audio(quiet(300))
+        await session.push_audio(tone(800))
+        await session.push_audio(quiet(500))
+
+    text = "".join(seg.text for seg in session.transcript().final_segments)
+    assert "Q3" in text
+    assert "第三四半期" not in text
+
+
+async def test_a_session_without_the_plugin_transcribes_unchanged() -> None:
+    """Turning the plugin off gives back the recognizer's own output, not an
+    error. The absent service is the pre-existing behaviour."""
+    ctx = Context()
+    assert ctx.get("vocabulary") is None
+
+    session = StreamingSession(
+        ctx,
+        MockASR(script=MEETING_JA[:1], degradation=0.0),
+        config=SessionConfig(
+            language=Language.JA,
+            emit_partials=False,
+            vad=VADConfig(silence_to_end_ms=300.0),
+        ),
+    )
+
+    async with session:
+        await session.push_audio(quiet(300))
+        await session.push_audio(tone(800))
+        await session.push_audio(quiet(500))
+
+    text = "".join(seg.text for seg in session.transcript().final_segments)
+    assert "第三四半期" in text
 
 
 async def test_partials_are_emitted_while_speaking() -> None:

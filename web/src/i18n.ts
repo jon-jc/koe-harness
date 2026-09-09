@@ -165,6 +165,14 @@ export interface Strings {
   readonly secModels: string;
   readonly secAppearance: string;
   readonly secAbout: string;
+  readonly secVocabulary: string;
+  readonly vocabularyHint: string;
+  readonly vocabularyFormat: string;
+  readonly vocabularyPlaceholder: string;
+  readonly vocabularySave: string;
+  readonly vocabularySaved: string;
+  readonly vocabularyCount: string;
+  readonly vocabularyOff: string;
   readonly audioSource: string;
   readonly sourceMic: string;
   readonly sourceSystem: string;
@@ -377,6 +385,15 @@ const JA: Strings = {
   secModels: "モデル",
   secAppearance: "表示",
   secAbout: "情報",
+  secVocabulary: "単語登録",
+  vocabularyHint:
+    "社名・製品名・人名など、認識エンジンが知りようのない語を登録します。文字起こしに反映されます。",
+  vocabularyFormat: "1行に1件。「聞こえた形 => 正しい表記」で修正、矢印なしなら語の登録のみ。",
+  vocabularyPlaceholder: "山本\n経営会議 => 取締役会\nKPI",
+  vocabularySave: "保存",
+  vocabularySaved: "保存しました",
+  vocabularyCount: "件",
+  vocabularyOff: "user-vocabulary プラグインが無効です。",
   audioSource: "音声の取り込み元",
   sourceMic: "マイク",
   sourceSystem: "画面・ウィンドウの音声",
@@ -588,6 +605,16 @@ const EN: Strings = {
   secModels: "Models",
   secAppearance: "Appearance",
   secAbout: "About",
+  secVocabulary: "Vocabulary",
+  vocabularyHint:
+    "Names, acronyms and product words the recognizer has no way to know. Applied to transcripts as they arrive.",
+  vocabularyFormat:
+    "One per line. \"heard => written\" corrects it; a line with no arrow just registers the word.",
+  vocabularyPlaceholder: "Yamamoto\nCoe => koe\nKPI",
+  vocabularySave: "Save",
+  vocabularySaved: "Saved",
+  vocabularyCount: "entries",
+  vocabularyOff: "The user-vocabulary plugin is turned off.",
   audioSource: "Audio source",
   sourceMic: "Microphone",
   sourceSystem: "Screen or window audio",
