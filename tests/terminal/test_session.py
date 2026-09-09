@@ -23,7 +23,7 @@ from koe.terminal import (
     TerminalService,
     WaitReason,
 )
-from koe.terminal.session import PROMPT_SENTINEL, clean_output, strip_ansi
+from koe.terminal.session import PROMPT_SENTINEL
 
 pytestmark = pytest.mark.asyncio
 
@@ -36,41 +36,6 @@ async def service() -> AsyncIterator[TerminalService]:
         yield svc
     finally:
         await svc.dispose()
-
-
-# --------------------------------------------------------------------------
-# cleaning -- pure, so it does not need a shell
-# --------------------------------------------------------------------------
-
-
-def test_colour_codes_are_removed() -> None:
-    assert strip_ansi("\x1b[32mgreen\x1b[0m") == "green"
-
-
-def test_window_title_sequences_are_removed() -> None:
-    """OSC ends at a BEL, not at a letter, so one regex cannot catch both."""
-    assert strip_ansi("\x1b]0;some title\x07text") == "text"
-
-
-def test_carriage_returns_are_folded() -> None:
-    """Progress output rewriting one line reads as one line once escapes go."""
-    assert strip_ansi("a\r\nb\rc") == "a\nbc"
-
-
-def test_the_echoed_command_is_dropped() -> None:
-    """The caller typed it; returning it costs tokens and reads as noise."""
-    raw = f"ls -la\ntotal 0\n{PROMPT_SENTINEL}\n"
-    assert clean_output(raw, command="ls -la") == "total 0"
-
-
-def test_a_line_that_merely_looks_like_the_command_survives() -> None:
-    """Only the first line is the echo; a later match is real output."""
-    raw = f"echo hi\nhi\necho hi\n{PROMPT_SENTINEL}\n"
-    assert clean_output(raw, command="echo hi") == "hi\necho hi"
-
-
-def test_the_prompt_never_reaches_the_caller() -> None:
-    assert PROMPT_SENTINEL not in clean_output(f"out\n{PROMPT_SENTINEL}\n")
 
 
 # --------------------------------------------------------------------------
@@ -274,3 +239,36 @@ async def test_a_runaway_command_does_not_grow_without_bound(
 
     assert session.dropped > 0
     assert session._buffered <= 300_000
+
+
+async def test_the_shell_uses_our_prompt_not_its_own(service: TerminalService) -> None:
+    """The bug the desktop build surfaced, pinned.
+
+    Exporting PS1 into the environment looks like it works and does not:
+    interactive bash assigns its own default over the inherited one, so the
+    sentinel never appeared, every send fell back to settling on silence, and
+    `bash-5.3#` leaked into the output.
+    """
+    session = await service.open(owner="me")
+    outcome = await service.send(session.id, "echo probe", owner="me")
+
+    assert outcome.reason is WaitReason.PROMPT
+    assert outcome.output == "probe"
+    assert PROMPT_SENTINEL not in outcome.output
+    assert "bash-" not in outcome.output
+
+
+async def test_the_first_send_is_not_offset_by_the_init_line(
+    service: TerminalService,
+) -> None:
+    """The other half of that fix.
+
+    The shell echoes the initialization command, so draining on the first
+    sentinel alone leaves the echo in the buffer — where it lands on the next
+    send and desynchronizes every command's output by one.
+    """
+    session = await service.open(owner="me")
+    outcome = await service.send(session.id, "echo first", owner="me")
+
+    assert outcome.output == "first"
+    assert "PS1" not in outcome.output

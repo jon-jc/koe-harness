@@ -57,6 +57,7 @@ backends are a seam rather than a branch in this file.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -97,6 +98,16 @@ IDLE_SESSION_S = 3600.0
 #: The prompt the shell is told to print. Unlikely in real output, and the
 #: reason a send can settle on proof rather than on silence.
 PROMPT_SENTINEL = "@@koe@@"
+
+#: Sent to the shell before anything else.
+#:
+#: Exporting PS1 into the environment is not enough, and assuming it was cost
+#: a bug: an interactive bash *assigns* its own default PS1 at startup,
+#: overriding what it inherited. The sentinel then never appeared, every send
+#: fell back to settling on silence, and `bash-5.3#` leaked into the output as
+#: the visible symptom. Assigning it as a command runs after that default is
+#: set, which is the only ordering that wins.
+INIT_COMMAND = f"PS1='{PROMPT_SENTINEL}\\n'; PS2=''; unset PROMPT_COMMAND\n"
 
 
 #: CSI sequences (colour, cursor moves) and OSC sequences (window title).
@@ -217,15 +228,34 @@ class ShellBackend:
     def _default_command() -> list[str]:
         """The shell to run here.
 
-        On Windows, prefer git-bash when it is present: the rest of koe's
-        tooling assumes POSIX utilities, and a user who has git installed has
-        them. `cmd.exe` is the fallback that always exists.
+        On Windows, prefer Git's bash: the rest of koe's tooling assumes POSIX
+        utilities, and a user who has git installed has them.
+
+        The install paths are checked *before* `which`, because `bash.exe` on
+        PATH is frequently the WSL launcher in System32. That starts a shell
+        in a different filesystem namespace, where the workspace directory we
+        hand it is spelled `/mnt/c/...` rather than `/c/...` — so the terminal
+        works but is quietly rooted somewhere other than the workspace every
+        other surface is showing.
+
+        `cmd.exe` is the fallback that always exists.
         """
         if sys.platform == "win32":
-            for candidate in ("bash.exe", "bash"):
-                found = shutil.which(candidate)
-                if found:
-                    return [found, "--norc", "--noprofile", "-i"]
+            # Uppercase: Windows environment lookups are case-insensitive, and
+            # the convention keeps the linter and the reader in agreement.
+            roots = [
+                os.environ.get("PROGRAMFILES", "C:\\Program Files"),
+                os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
+            ]
+            for tail in (("bin",), ("usr", "bin")):
+                for root in roots:
+                    candidate = Path(root, "Git", *tail, "bash.exe")
+                    if candidate.is_file():
+                        return [str(candidate), "--norc", "--noprofile", "-i"]
+
+            found = shutil.which("bash.exe") or shutil.which("bash")
+            if found and "system32" not in found.lower():
+                return [found, "--norc", "--noprofile", "-i"]
             return [os.environ.get("COMSPEC", "cmd.exe")]
         return [os.environ.get("SHELL", "/bin/bash"), "--norc", "--noprofile", "-i"]
 
@@ -233,7 +263,8 @@ class ShellBackend:
         env = dict(os.environ)
         # A prompt we can recognise, and no colour: escape sequences in a
         # buffer that is going to a model are noise it pays for by the token.
-        # PS1 only survives because the shell is started with --norc.
+        # Set here *and* sent as INIT_COMMAND after spawn: bash overrides this
+        # for an interactive shell, but a shell that is not bash may honour it.
         env["PS1"] = f"{PROMPT_SENTINEL}\n"
         env["PS2"] = ""
         env["TERM"] = "dumb"
@@ -363,9 +394,23 @@ class TerminalService:
         session._reader = asyncio.create_task(self._pump(session))
         self._sessions[session.id] = session
 
-        # Wait for the first prompt, so the caller gets a settled terminal
-        # rather than a banner arriving in the middle of their first command.
+        # Before the banner wait, so the first prompt anyone sees is already
+        # the sentinel rather than whatever the shell chose for itself.
+        if process.stdin is not None:
+            with contextlib.suppress(OSError, ConnectionError):
+                process.stdin.write(INIT_COMMAND.encode("utf-8"))
+                await process.stdin.drain()
+
+        # Settle before returning, so the caller gets a quiet terminal rather
+        # than a banner arriving in the middle of their first command.
+        #
+        # Draining once on the first sentinel is not enough, and getting that
+        # wrong desynchronized the buffer by a whole command: the shell echoes
+        # the init line, so the sentinel can appear while that echo is still
+        # in flight, and whatever is left lands on the *next* send's output.
+        # Waiting for silence after the prompt is what makes the drain total.
         await self._quiet(session, idle_ms=IDLE_MS, budget_s=5.0)
+        await asyncio.sleep(IDLE_GRACE_MS / 1000.0 / 5)
         session.drain()
         logger.info("terminal opened", extra={"session": session.id, "owner": owner})
         return session
@@ -404,8 +449,17 @@ class TerminalService:
     async def _terminate(self, session: Session) -> None:
         if session._reader is not None:
             session._reader.cancel()
-            with_suppressed = asyncio.gather(session._reader, return_exceptions=True)
-            await with_suppressed
+            await asyncio.gather(session._reader, return_exceptions=True)
+
+        # Close stdin before signalling. A shell reading a closed stdin exits
+        # on its own, which is a cleaner end than a signal — and leaving the
+        # pipe open means asyncio finalizes the transport during garbage
+        # collection instead, after the loop has gone, which surfaces as
+        # "Event loop is closed" from a destructor nobody can catch.
+        if session.process.stdin is not None:
+            with contextlib.suppress(Exception):
+                session.process.stdin.close()
+
         if session.alive:
             session.process.terminate()
             try:
@@ -416,6 +470,11 @@ class TerminalService:
                 # reach from here.
                 session.process.kill()
                 await session.process.wait()
+
+        # Give the proactor a turn to finish tearing the pipes down, so the
+        # transports are collected inside the loop's lifetime rather than
+        # after it.
+        await asyncio.sleep(0)
 
     async def dispose(self) -> None:
         """Close every session. Called when the service's scope unwinds."""
