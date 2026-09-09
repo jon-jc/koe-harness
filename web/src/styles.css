@@ -215,9 +215,14 @@ input {
 
 /* ---------------------------------------------------------------- layout */
 
+/*
+ * Two rows now: the header, and the workspace shell that owns everything
+ * else. The stage moved inside the meeting workspace when the rail arrived —
+ * a record button above a code viewer is a control that does nothing there.
+ */
 .app {
   display: grid;
-  grid-template-rows: var(--header-h) auto 1fr;
+  grid-template-rows: var(--header-h) 1fr;
   height: 100dvh;
   overflow: hidden;
 }
@@ -271,7 +276,16 @@ input {
   grid-template-columns: 1fr 1fr;
   gap: 1px;
   background: var(--border);
+  /* Both are needed: `flex: 1` claims the space the meeting view has left
+     after the stage, and `min-height: 0` lets the panes scroll inside it
+     rather than growing the page. */
+  flex: 1;
   min-height: 0;
+}
+
+/* The stage no longer sits in the app grid, so it states its own height. */
+#view-meeting > .stage {
+  flex: none;
 }
 
 .pane {
@@ -1420,5 +1434,562 @@ mark.find {
 
   .nav-item {
     white-space: nowrap;
+  }
+}
+
+/* ---------------------------------------------------------------- workspaces */
+
+/*
+ * A rail rather than more tabs across the top. Four workspaces that each own
+ * the whole area are a different thing from three views of one transcript, and
+ * flattening them into one tab strip would say they are the same.
+ */
+.shell {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.rail {
+  flex: none;
+  width: 72px;
+  border-inline-end: 1px solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--step) * 2) 0;
+  gap: 2px;
+}
+
+.rail-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  padding: 10px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border-inline-start: 2px solid transparent;
+}
+
+.rail-item:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.rail-item.on {
+  color: var(--accent);
+  border-inline-start-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.rail-icon {
+  font-size: 17px;
+  line-height: 1;
+  font-family: var(--font-ja);
+}
+
+.rail-label {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.views {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A class-level display beats the UA sheet's [hidden] rule, so restate it. */
+.view[hidden] {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- chat */
+
+#view-chat {
+  padding: calc(var(--step) * 4);
+  gap: calc(var(--step) * 3);
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--step) * 3);
+  padding-inline-end: calc(var(--step) * 2);
+}
+
+.msg {
+  position: relative;
+  max-width: 100%;
+}
+
+.msg.user .msg-body {
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  margin-inline-start: auto;
+  max-width: 80%;
+  width: fit-content;
+}
+
+.msg-body {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: calc(var(--step) * 3);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg-copy {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.msg:hover .msg-copy,
+.msg-copy:focus-visible {
+  opacity: 1;
+}
+
+/*
+ * A tool call is structure, not prose. Collapsed it is one line saying what
+ * ran and how long it took; expanded it is exactly what came back. Folding
+ * that into the message text throws away the one thing that makes an agent
+ * legible -- what it did, as distinct from what it says it did.
+ */
+.toolcall {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  margin-block-end: calc(var(--step) * 2);
+  font-size: 12px;
+}
+
+.toolcall summary {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.toolcall summary::-webkit-details-marker {
+  display: none;
+}
+
+.toolcall summary::before {
+  content: "▸";
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.toolcall[open] summary::before {
+  content: "▾";
+}
+
+.tool-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tool-args {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.toolcall.running .tool-state {
+  color: var(--warn);
+}
+
+.toolcall.failed {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.toolcall.failed .tool-name,
+.toolcall.failed .tool-state {
+  color: var(--danger);
+}
+
+.tool-output {
+  margin: 0;
+  padding: 10px;
+  border-block-start: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow-y: auto;
+  color: var(--text-2);
+}
+
+.chat-compose {
+  display: flex;
+  gap: calc(var(--step) * 2);
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  resize: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-ja);
+  font-size: 14px;
+  line-height: 1.6;
+  max-height: 180px;
+}
+
+.chat-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.chat-status {
+  min-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-status.bad {
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- terminal */
+
+#view-terminal {
+  padding: calc(var(--step) * 3);
+  gap: calc(var(--step) * 2);
+}
+
+.term-screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: calc(var(--step) * 3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+.term-echo {
+  color: var(--text);
+  font-weight: 600;
+  margin-block-start: 6px;
+}
+
+.term-sigil {
+  color: var(--accent);
+  user-select: none;
+}
+
+.term-out.bad {
+  color: var(--danger);
+}
+
+.term-out.dim {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.term-compose {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+}
+
+.term-input {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px 0;
+}
+
+.term-input:disabled {
+  opacity: 0.6;
+}
+
+.term-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  min-height: 14px;
+}
+
+/* ---------------------------------------------------------------- code */
+
+#view-code {
+  flex-direction: row;
+}
+
+.code-side {
+  flex: none;
+  width: 280px;
+  border-inline-end: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-2);
+}
+
+.code-side-head {
+  padding: calc(var(--step) * 2);
+  border-block-end: 1px solid var(--border);
+}
+
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: calc(var(--step) * 2);
+  font-size: 12px;
+}
+
+.tree-children {
+  padding-inline-start: 14px;
+}
+
+.tree-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 5px;
+  border-radius: 4px;
+}
+
+.tree-item:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.tree-item.dir .tree-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tree-mark {
+  width: 10px;
+  color: var(--text-3);
+  font-size: 9px;
+  flex: none;
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 2) calc(var(--step) * 4);
+  border-block-end: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.code-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.code-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.code-gutter {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  text-align: end;
+  padding: calc(var(--step) * 3) 10px;
+  color: var(--text-3);
+  background: var(--surface-2);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  position: sticky;
+  inset-inline-start: 0;
+}
+
+.code-text {
+  margin: 0;
+  padding: calc(var(--step) * 3) calc(var(--step) * 4);
+  white-space: pre;
+  flex: 1;
+}
+
+.t-keyword { color: var(--spk-3); font-weight: 600; }
+.t-string { color: var(--spk-2); }
+.t-comment { color: var(--text-3); font-style: italic; }
+.t-number { color: var(--spk-4); }
+
+.hits {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--step) * 2);
+}
+
+.hit {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.hit:hover {
+  background: var(--surface-2);
+}
+
+.hit-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.hit-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- plugins */
+
+.plugin {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--step) * 3);
+  margin-block-end: calc(var(--step) * 2);
+  background: var(--surface-2);
+}
+
+.plugin-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 2);
+}
+
+.plugin-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.plugin-error {
+  margin: calc(var(--step) * 2) 0 0;
+  padding: calc(var(--step) * 2);
+  background: var(--danger-soft);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  color: var(--text-2);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .rail {
+    width: 56px;
+  }
+
+  .rail-label {
+    display: none;
+  }
+
+  .code-side {
+    width: 190px;
   }
 }

@@ -115,9 +115,38 @@ interface Health {
   japanese_tokenizer: string;
 }
 
-type Section = "audio" | "recognition" | "models" | "appearance" | "about";
+type Section = "audio" | "recognition" | "models" | "plugins" | "appearance" | "about";
 
-const SECTIONS: readonly Section[] = ["audio", "recognition", "models", "appearance", "about"];
+const SECTIONS: readonly Section[] = [
+  "audio",
+  "recognition",
+  "models",
+  "plugins",
+  "appearance",
+  "about",
+];
+
+interface PluginRecord {
+  name: string;
+  origin: string;
+  description: string;
+  version: string;
+  builtin: boolean;
+  enabled: boolean;
+  active: boolean;
+  error: string;
+}
+
+interface PluginListing {
+  plugins: PluginRecord[];
+  directory: string;
+}
+
+interface ToolRecord {
+  name: string;
+  source: string;
+  dangerous: boolean;
+}
 
 export class SettingsDialog {
   private readonly dialog: HTMLDialogElement;
@@ -127,6 +156,8 @@ export class SettingsDialog {
   private listing: CredentialListing | null = null;
   private health: Health | null = null;
   private devices: InputDevice[] = [];
+  private pluginListing: PluginListing | null = null;
+  private toolRecords: ToolRecord[] = [];
   /** A short-lived capture used only to prove the chosen source works. */
   private probe: AudioCapture | null = null;
   private probeTimer = 0;
@@ -188,7 +219,12 @@ export class SettingsDialog {
     this.render();
     // Fetched in parallel and rendered as they land, so the panel is usable
     // immediately rather than blank until the slowest request returns.
-    await Promise.all([this.loadCredentials(), this.loadHealth(), this.loadDevices()]);
+    await Promise.all([
+      this.loadCredentials(),
+      this.loadHealth(),
+      this.loadDevices(),
+      this.loadPlugins(),
+    ]);
     this.render();
   }
 
@@ -221,6 +257,19 @@ export class SettingsDialog {
     this.devices = await listInputDevices();
   }
 
+  private async loadPlugins(): Promise<void> {
+    try {
+      const [plugins, tools] = await Promise.all([
+        fetch("/v1/plugins").then((r) => (r.ok ? r.json() : null)),
+        fetch("/v1/tools").then((r) => (r.ok ? r.json() : null)),
+      ]);
+      if (plugins) this.pluginListing = plugins as PluginListing;
+      if (tools) this.toolRecords = (tools as { tools: ToolRecord[] }).tools;
+    } catch {
+      /* the section says it could not load rather than rendering empty */
+    }
+  }
+
   /* -------------------------------------------------------------- render */
 
   private render(): void {
@@ -229,6 +278,7 @@ export class SettingsDialog {
       audio: s.secAudio,
       recognition: s.secRecognition,
       models: s.secModels,
+      plugins: s.secPlugins,
       appearance: s.secAppearance,
       about: s.secAbout,
     };
@@ -256,7 +306,9 @@ export class SettingsDialog {
           ? this.recognitionSection()
           : this.section === "models"
             ? this.modelsSection()
-            : this.section === "appearance"
+            : this.section === "plugins"
+              ? this.pluginsSection()
+              : this.section === "appearance"
               ? this.appearanceSection()
               : this.aboutSection()),
     );
@@ -663,6 +715,121 @@ export class SettingsDialog {
     return parts;
   }
 
+  /* ------------------------------------------------------------- plugins */
+
+  private pluginsSection(): HTMLElement[] {
+    const s = this.strings;
+    const listing = this.pluginListing;
+    const parts: HTMLElement[] = [];
+
+    if (!listing) {
+      parts.push(h("p", { class: "note", text: s.cannotConnect }));
+      return parts;
+    }
+
+    parts.push(h("p", { class: "note", style: "margin:0 0 14px", text: s.pluginsHint }));
+
+    for (const plugin of listing.plugins) {
+      // Which tools each plugin contributes, because "what will I lose by
+      // turning this off" is the only question anyone has on this screen.
+      const provided = this.toolRecords
+        .filter((tool) => tool.source === pluginSource(plugin.name))
+        .map((tool) => tool.name);
+      parts.push(this.pluginCard(plugin, provided));
+    }
+
+    const actions = h("div", { class: "row", style: "margin-top:14px" });
+    const reload = h("button", { class: "btn ghost", type: "button", text: s.pluginReload });
+    reload.addEventListener("click", () => void this.reloadPlugins(reload));
+    actions.append(reload);
+    parts.push(actions);
+
+    if (listing.directory) {
+      parts.push(
+        h("p", { class: "label", style: "margin-top:16px", text: s.pluginsDirectory }),
+        h("p", { class: "note", style: "font-family:var(--font-mono);font-size:11px", text: listing.directory }),
+      );
+    }
+    parts.push(h("p", { class: "note callout", text: s.pluginsTrust }));
+    return parts;
+  }
+
+  private pluginCard(plugin: PluginRecord, provided: string[]): HTMLElement {
+    const s = this.strings;
+    const card = h("div", { class: "plugin" });
+
+    const head = h("div", { class: "plugin-head" });
+    const toggle = h("input", { type: "checkbox", class: "switch" }) as HTMLInputElement;
+    toggle.checked = plugin.enabled;
+    toggle.disabled = Boolean(plugin.error);
+    toggle.setAttribute("aria-label", plugin.name);
+    toggle.addEventListener("change", () => void this.setPlugin(plugin.name, toggle));
+
+    head.append(toggle, h("span", { class: "plugin-name", text: plugin.name }));
+    if (plugin.version) head.append(h("span", { class: "note", text: plugin.version }));
+    if (plugin.builtin) head.append(h("span", { class: "chip", text: s.pluginBuiltin }));
+    if (plugin.error) head.append(h("span", { class: "chip bad", text: s.pluginFailed }));
+    else if (plugin.enabled && !plugin.active) {
+      // Enabled but not running means it is waiting on a service it declared
+      // — worth distinguishing from broken.
+      head.append(h("span", { class: "chip warn", text: s.pluginInactive }));
+    }
+    card.append(head);
+
+    if (plugin.description) {
+      card.append(h("p", { class: "note", style: "margin:8px 0 0", text: plugin.description }));
+    }
+    if (provided.length > 0) {
+      card.append(
+        h("p", {
+          class: "note",
+          style: "margin:6px 0 0;font-family:var(--font-mono);font-size:11px",
+          text: `${s.toolsProvided}: ${provided.join(", ")}`,
+        }),
+      );
+    }
+    // The traceback, verbatim: a plugin that failed to import is useless to
+    // debug without it, and this is the only place it surfaces.
+    if (plugin.error) card.append(h("pre", { class: "plugin-error", text: plugin.error }));
+    return card;
+  }
+
+  private async setPlugin(name: string, toggle: HTMLInputElement): Promise<void> {
+    toggle.disabled = true;
+    try {
+      const response = await fetch(`/v1/plugins/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: toggle.checked }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const body = (await response.json()) as { tools: ToolRecord[] };
+      this.toolRecords = body.tools;
+      await this.loadPlugins();
+      this.render();
+    } catch {
+      this.notify.error(this.strings.cannotConnect);
+      toggle.checked = !toggle.checked;
+    } finally {
+      toggle.disabled = false;
+    }
+  }
+
+  private async reloadPlugins(button: HTMLButtonElement): Promise<void> {
+    button.disabled = true;
+    try {
+      const response = await fetch("/v1/plugins/reload", { method: "POST" });
+      if (!response.ok) throw new Error(String(response.status));
+      this.pluginListing = (await response.json()) as PluginListing;
+      await this.loadPlugins();
+      this.render();
+    } catch {
+      this.notify.error(this.strings.cannotConnect);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   /* ------------------------------------------------------------- widgets */
 
   private heading(text: string): HTMLElement {
@@ -963,4 +1130,16 @@ export class ShortcutsDialog {
     this.body.replaceChildren(grid);
     this.dialog.showModal();
   }
+}
+
+
+/**
+ * The `source` a plugin's tools declare, from its name.
+ *
+ * They differ because a plugin is named for what it is ("workspace-tools")
+ * and a tool's source for where it came from ("workspace"). Deriving one from
+ * the other here beats making every tool restate its plugin's full name.
+ */
+function pluginSource(name: string): string {
+  return name.replace(/-tools$/, "");
 }

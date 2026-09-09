@@ -27,6 +27,9 @@ import "./styles.css";
 import { AudioCapture, CaptureError } from "./audio";
 import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
+import { ChatPanel } from "./panels/chat";
+import { CodePanel } from "./panels/code";
+import { TerminalPanel } from "./panels/terminal";
 import * as prefs from "./prefs";
 import { SettingsDialog, ShortcutsDialog, type SettingsHost } from "./settings";
 import {
@@ -170,6 +173,12 @@ function loadTheme(): Theme {
   return "system";
 }
 
+/* ------------------------------------------------------------ workspaces */
+
+type WorkspaceView = "meeting" | "chat" | "terminal" | "code";
+
+const WORKSPACES: readonly WorkspaceView[] = ["meeting", "chat", "terminal", "code"];
+
 /* ------------------------------------------------------------------ app */
 
 class App {
@@ -177,6 +186,10 @@ class App {
   private client: StreamClient | null = null;
   private capture: AudioCapture | null = null;
   private prefs: prefs.Prefs = prefs.load();
+  private view: WorkspaceView = "meeting";
+  private chat: ChatPanel | null = null;
+  private terminal: TerminalPanel | null = null;
+  private code: CodePanel | null = null;
   private theme: Theme = loadTheme();
   private tickTimer = 0;
   private startedAt = 0;
@@ -205,6 +218,7 @@ class App {
     settingsBtn: el<HTMLButtonElement>("settings"),
     helpBtn: el<HTMLButtonElement>("help"),
     tabs: el<HTMLDivElement>("tabs"),
+    rail: el<HTMLElement>("rail"),
     live: el<HTMLDivElement>("live-region"),
     search: el<HTMLDivElement>("search"),
     searchInput: el<HTMLInputElement>("search-input"),
@@ -266,6 +280,23 @@ class App {
     this.refs.themeBtn.addEventListener("click", () => {
       const order: Theme[] = ["system", "light", "dark"];
       this.applyThemeChoice(order[(order.indexOf(this.theme) + 1) % order.length]);
+    });
+
+    this.refs.rail.addEventListener("click", (event) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
+      if (target) this.show(target.dataset.view as WorkspaceView);
+    });
+
+    // Arrow keys along the rail, which a vertical tablist has to support to
+    // be reachable without a mouse.
+    this.refs.rail.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+      if (step === 0) return;
+      event.preventDefault();
+      const at = WORKSPACES.indexOf(this.view);
+      const next = WORKSPACES[(at + step + WORKSPACES.length) % WORKSPACES.length];
+      this.show(next);
+      el(`rail-${next}`).focus();
     });
 
     this.refs.settingsBtn.addEventListener("click", () => void this.settings.open());
@@ -425,6 +456,39 @@ class App {
       }
     }
     return s.micDenied;
+  }
+
+  /**
+   * Switch workspace.
+   *
+   * Panels are built the first time they are shown rather than at startup:
+   * constructing a terminal on load would spawn a shell for someone who only
+   * wanted to record a meeting, and a file tree costs a request per directory.
+   */
+  private show(view: WorkspaceView): void {
+    if (!WORKSPACES.includes(view)) return;
+    this.view = view;
+
+    for (const name of WORKSPACES) {
+      el(`view-${name}`).hidden = name !== view;
+      const button = el(`rail-${name}`);
+      const on = name === view;
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-selected", String(on));
+      button.tabIndex = on ? 0 : -1;
+    }
+
+    const s = this.s;
+    if (view === "chat") {
+      this.chat ??= new ChatPanel(el("view-chat"), s, this.notify);
+      this.chat.focus();
+    } else if (view === "terminal") {
+      this.terminal ??= new TerminalPanel(el("view-terminal"), s, this.notify);
+      this.terminal.focus();
+    } else if (view === "code") {
+      this.code ??= new CodePanel(el("view-code"), s, this.notify);
+      void this.code.activate();
+    }
   }
 
   /* ---------------------------------------------------------------- session */
@@ -832,6 +896,20 @@ class App {
     el("t-asr-lang").textContent = s.asrLanguage;
     el("t-tagline").textContent = s.tagline;
     el("t-hint").replaceChildren(h("kbd", { text: "Space" }), ` ${s.toggleRecord}`);
+
+    const railLabels: Record<WorkspaceView, string> = {
+      meeting: s.wsMeeting,
+      chat: s.wsChat,
+      terminal: s.wsTerminal,
+      code: s.wsCode,
+    };
+    for (const name of WORKSPACES) {
+      const label = el(`rail-${name}`).querySelector(".rail-label");
+      if (label) label.textContent = railLabels[name];
+    }
+    this.chat?.setStrings(s);
+    this.terminal?.setStrings(s);
+    this.code?.setStrings(s);
 
     const auto = this.refs.asrLang.querySelector('option[value="unknown"]');
     if (auto) auto.textContent = s.auto;

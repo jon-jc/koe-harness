@@ -39,7 +39,34 @@
         </div>
       </header>
 
-      <!-- -------------------------------------------------------- stage -->
+      <!-- ---------------------------------------------------- workspaces -->
+      <div class="shell">
+        <nav class="rail" id="rail" role="tablist" aria-label="workspace">
+          <button class="rail-item on" type="button" role="tab" data-view="meeting"
+                  aria-selected="true" id="rail-meeting">
+            <span class="rail-icon" aria-hidden="true">声</span>
+            <span class="rail-label">議事録</span>
+          </button>
+          <button class="rail-item" type="button" role="tab" data-view="chat"
+                  aria-selected="false" id="rail-chat" tabindex="-1">
+            <span class="rail-icon" aria-hidden="true">話</span>
+            <span class="rail-label">チャット</span>
+          </button>
+          <button class="rail-item" type="button" role="tab" data-view="terminal"
+                  aria-selected="false" id="rail-terminal" tabindex="-1">
+            <span class="rail-icon" aria-hidden="true">⌘</span>
+            <span class="rail-label">端末</span>
+          </button>
+          <button class="rail-item" type="button" role="tab" data-view="code"
+                  aria-selected="false" id="rail-code" tabindex="-1">
+            <span class="rail-icon" aria-hidden="true">{ }</span>
+            <span class="rail-label">コード</span>
+          </button>
+        </nav>
+
+        <div class="views">
+        <!-- ---------------------------------------------------- meeting -->
+        <div class="view" id="view-meeting">
       <div class="stage">
         <button class="btn" id="toggle" type="button" aria-pressed="false">
           <span class="dot" aria-hidden="true"></span>
@@ -143,6 +170,18 @@
           </div>
           <div class="pane-body" id="side"></div>
         </section>
+      </div>
+        </div>
+
+        <!-- ------------------------------------------------------- chat -->
+        <div class="view" id="view-chat" hidden></div>
+
+        <!-- --------------------------------------------------- terminal -->
+        <div class="view" id="view-terminal" hidden></div>
+
+        <!-- ------------------------------------------------------- code -->
+        <div class="view" id="view-code" hidden></div>
+        </div>
       </div>
     </div>
 
