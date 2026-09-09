@@ -118,6 +118,38 @@ export interface Strings {
   readonly shortcutHelp: string;
   readonly shortcutClose: string;
   readonly dismiss: string;
+  /* -- workspaces and panels ------------------------------------ */
+  readonly wsMeeting: string;
+  readonly wsChat: string;
+  readonly wsTerminal: string;
+  readonly wsCode: string;
+  readonly chatPlaceholder: string;
+  readonly chatSend: string;
+  readonly chatEmpty: string;
+  readonly chatThinking: string;
+  readonly chatRunning: string;
+  readonly chatSteps: string;
+  readonly chatToolCall: string;
+  readonly chatToolCalls: string;
+  readonly terminalPrompt: string;
+  readonly terminalStarting: string;
+  readonly terminalReady: string;
+  readonly terminalStillRunning: string;
+  readonly terminalExited: string;
+  readonly terminalDisabled: string;
+  readonly codeSearch: string;
+  readonly codeEmpty: string;
+  readonly lines: string;
+  readonly truncated: string;
+  readonly secPlugins: string;
+  readonly pluginsHint: string;
+  readonly pluginsDirectory: string;
+  readonly pluginsTrust: string;
+  readonly pluginReload: string;
+  readonly pluginBuiltin: string;
+  readonly pluginInactive: string;
+  readonly pluginFailed: string;
+  readonly toolsProvided: string;
   /* -- settings panel ------------------------------------------- */
   readonly secAudio: string;
   readonly secRecognition: string;
@@ -291,6 +323,37 @@ const JA: Strings = {
   shortcutHelp: "このヘルプ",
   shortcutClose: "閉じる / 選択解除",
   dismiss: "閉じる",
+  wsMeeting: "議事録",
+  wsChat: "チャット",
+  wsTerminal: "端末",
+  wsCode: "コード",
+  chatPlaceholder: "この会議やコードについて質問してください",
+  chatSend: "送信",
+  chatEmpty: "文字起こし・議事録・ワークスペースのファイルを読めるアシスタントです。ツールを実際に呼び出し、その過程も表示します。",
+  chatThinking: "考えています…",
+  chatRunning: "実行中",
+  chatSteps: "ステップ",
+  chatToolCall: "ツール呼び出し",
+  chatToolCalls: "ツール呼び出し",
+  terminalPrompt: "コマンドを入力",
+  terminalStarting: "シェルを起動しています…",
+  terminalReady: "シェルを起動しました。cd や環境変数はセッション内で保持されます。",
+  terminalStillRunning: "…まだ実行中です。出力を追跡しています。",
+  terminalExited: "シェルが終了しました。",
+  terminalDisabled: "ターミナルプラグインが無効です。設定 → プラグイン から有効にしてください。",
+  codeSearch: "コード内を検索",
+  codeEmpty: "左のツリーからファイルを選ぶか、検索してください。表示専用です。",
+  lines: "行",
+  truncated: "一部のみ",
+  secPlugins: "プラグイン",
+  pluginsHint: "すべての機能はプラグインとして構成されています。無効にするとアンマウントされ、そのツールも即座に消えます。",
+  pluginsDirectory: "プラグインの場所",
+  pluginsTrust: "プラグインはサンドボックス化されていません。koe と同じ権限で動作するため、導入前に内容を確認してください。",
+  pluginReload: "再読み込み",
+  pluginBuiltin: "標準",
+  pluginInactive: "停止中",
+  pluginFailed: "読み込み失敗",
+  toolsProvided: "提供ツール",
   secAudio: "音声",
   secRecognition: "認識",
   secModels: "モデル",
@@ -462,6 +525,37 @@ const EN: Strings = {
   shortcutHelp: "this help",
   shortcutClose: "close / clear selection",
   dismiss: "Dismiss",
+  wsMeeting: "Meeting",
+  wsChat: "Chat",
+  wsTerminal: "Terminal",
+  wsCode: "Code",
+  chatPlaceholder: "Ask about this meeting, or about the code",
+  chatSend: "Send",
+  chatEmpty: "An assistant that can read the transcript, the 議事録, and this workspace's files. It calls tools for real, and shows you the calls.",
+  chatThinking: "Working…",
+  chatRunning: "running",
+  chatSteps: "steps",
+  chatToolCall: "tool call",
+  chatToolCalls: "tool calls",
+  terminalPrompt: "Type a command",
+  terminalStarting: "Starting a shell…",
+  terminalReady: "Shell ready. cd and environment variables persist across commands.",
+  terminalStillRunning: "…still running; following the output.",
+  terminalExited: "The shell exited.",
+  terminalDisabled: "The terminal plugin is disabled. Enable it in Settings → Plugins.",
+  codeSearch: "Search the code",
+  codeEmpty: "Pick a file from the tree, or search. This view is read-only.",
+  lines: "lines",
+  truncated: "truncated",
+  secPlugins: "Plugins",
+  pluginsHint: "Every capability is a plugin. Disabling one unmounts it — its tools disappear immediately, they do not merely stop responding.",
+  pluginsDirectory: "Plugins directory",
+  pluginsTrust: "Plugins are not sandboxed. They run with the same privileges as koe, so read one before you install it.",
+  pluginReload: "Reload",
+  pluginBuiltin: "built-in",
+  pluginInactive: "inactive",
+  pluginFailed: "failed to load",
+  toolsProvided: "tools",
   secAudio: "Audio",
   secRecognition: "Recognition",
   secModels: "Models",
