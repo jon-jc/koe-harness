@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from koe import __version__
+from koe.agent import Conversation, adapter_for
 from koe.api.demo import drive_demo, retime
 from koe.api.middleware import RequestContextMiddleware
 from koe.config import Settings, get_settings
@@ -67,6 +68,15 @@ from koe.tools.builtin import meeting_tools, workspace_tools
 from koe.workspace import Workspace, WorkspaceError
 
 logger = logging.getLogger(__name__)
+
+#: Live conversations, keyed by id. In-process and deliberately not durable:
+#: a chat is a working surface, and persisting one raises questions about
+#: where transcripts of a private meeting are stored that a first cut should
+#: not answer by accident.
+_CONVERSATIONS: dict[str, Any] = {}
+
+#: How many to keep before the oldest is dropped.
+MAX_CONVERSATIONS = 32
 
 
 # --------------------------------------------------------------------------
@@ -265,6 +275,14 @@ class Services:
 # --------------------------------------------------------------------------
 # schemas
 # --------------------------------------------------------------------------
+
+
+class ChatRequest(BaseModel):
+    """One turn of conversation."""
+
+    message: str = Field(min_length=1, max_length=32_000)
+    #: Continues an existing conversation; omit to start one.
+    conversation: str = ""
 
 
 class TerminalOpen(BaseModel):
@@ -586,6 +604,50 @@ def build_router(services: Services) -> APIRouter:
         services.metrics.increment(f"tools.{'ok' if result.ok else 'error'}")
         return JSONResponse(result.to_dict())
 
+    # -------------------------------------------------------------------- chat
+
+    def _conversation(conversation_id: str) -> Any:
+        """Fetch or start a conversation, bound to the LLM configured *now*.
+
+        The adapter is chosen per turn rather than held for the life of the
+        conversation, so pasting an API key mid-chat takes effect on the next
+        message instead of after a restart — the same property the rest of the
+        app holds to.
+        """
+        existing = _CONVERSATIONS.get(conversation_id) if conversation_id else None
+        if existing is not None:
+            existing.adapter = adapter_for(services.llm)
+            return existing
+
+        conversation = Conversation(adapter_for(services.llm), services.tools)
+        _CONVERSATIONS[conversation.id] = conversation
+        # Bounded: a long-running desktop app must not accumulate every
+        # conversation anyone ever started. Oldest first, which is insertion
+        # order for a dict.
+        while len(_CONVERSATIONS) > MAX_CONVERSATIONS:
+            _CONVERSATIONS.pop(next(iter(_CONVERSATIONS)))
+        return conversation
+
+    @router.get("/v1/chat/{conversation_id}")
+    async def chat_history(conversation_id: str) -> JSONResponse:
+        conversation = _CONVERSATIONS.get(conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="no such conversation")
+        return JSONResponse({"conversation": conversation.id, "messages": conversation.history()})
+
+    @router.post("/v1/chat")
+    async def chat(request: ChatRequest) -> JSONResponse:
+        """One turn, answered when it is finished.
+
+        The websocket below is the surface the UI uses; this exists for
+        scripting and for anything that would rather have one response than a
+        stream of events.
+        """
+        conversation = _conversation(request.conversation)
+        result = await conversation.send(request.message)
+        services.metrics.increment("chat.turns")
+        return JSONResponse({"conversation": conversation.id, **result.to_dict()})
+
     # ---------------------------------------------------------------- terminal
 
     def _terminals() -> Any:
@@ -710,6 +772,50 @@ def build_router(services: Services) -> APIRouter:
 # --------------------------------------------------------------------------
 # websocket
 # --------------------------------------------------------------------------
+
+
+async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
+    """Drive conversations over one socket until the client goes away."""
+    await websocket.accept()
+    conversation: Any = None
+    try:
+        while True:
+            frame = await websocket.receive_json()
+            text = str(frame.get("message", "")).strip()
+            if not text:
+                await websocket.send_json({"type": "error", "message": "empty message"})
+                continue
+
+            if conversation is None or frame.get("reset"):
+                conversation = Conversation(adapter_for(services.llm), services.tools)
+            else:
+                # Re-resolved per turn, so a key pasted mid-conversation takes
+                # effect on the next message rather than after a restart.
+                conversation.adapter = adapter_for(services.llm)
+
+            async def emit(event: str, payload: dict[str, Any]) -> None:
+                await websocket.send_json({"type": event, **payload})
+
+            await websocket.send_json(
+                {
+                    "type": "conversation",
+                    "id": conversation.id,
+                    "adapter": conversation.adapter.name,
+                }
+            )
+            result = await conversation.send(text, on_event=emit)
+            services.metrics.increment("chat.turns")
+            services.metrics.increment("chat.tool_calls", result.tool_calls)
+    except WebSocketDisconnect:
+        # The normal way a chat ends: the tab closed.
+        return
+    except Exception:
+        logger.exception("chat socket failed")
+        with contextlib.suppress(Exception):
+            await websocket.send_json({"type": "error", "message": "internal error"})
+    finally:
+        with contextlib.suppress(Exception):
+            await websocket.close()
 
 
 async def _stream_endpoint(websocket: WebSocket, services: Services) -> None:
@@ -1223,6 +1329,19 @@ def create_app(services: Services | None = None) -> FastAPI:
     @app.websocket("/v1/stream")
     async def stream(websocket: WebSocket) -> None:
         await _stream_endpoint(websocket, resolved)
+
+    @app.websocket("/v1/chat/stream")
+    async def chat_stream(websocket: WebSocket) -> None:
+        """A turn, streamed as it happens.
+
+        The turn emits before it returns — step started, tool called, tool
+        returned — so the panel shows a model reading three files rather than
+        a spinner that resolves into a paragraph. A request/response endpoint
+        can only be watched by waiting, and a turn that calls tools is exactly
+        the case where waiting is longest and the intermediate steps are the
+        most interesting thing on screen.
+        """
+        await _chat_endpoint(websocket, resolved)
 
     # The built client, when present. Mounted rather than read per request so
     # the bundle is served with proper caching headers.
