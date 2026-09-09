@@ -60,7 +60,7 @@ from koe.routing.budget import Budget, Priority
 from koe.routing.router import Router
 from koe.telemetry.ledger import BudgetExceeded, CostLedger
 from koe.telemetry.metrics import METRICS, Metrics, configure_logging
-from koe.terminal import TerminalFailure, terminal_plugin
+from koe.terminal import TerminalFailure, pty_available, terminal_plugin
 from koe.text.script import Language
 from koe.text.tokenize import mecab_available
 from koe.tools import ToolRegistry
@@ -685,6 +685,22 @@ def build_router(services: Services) -> APIRouter:
             )
         return service
 
+    @router.get("/v1/terminal/capabilities")
+    async def terminal_capabilities() -> JSONResponse:
+        """What kinds of terminal this machine can actually open.
+
+        The client asks before choosing a panel: a pty gives full-screen
+        programs and needs an emulator, pipes give clean text and do not.
+        Guessing from the platform would be wrong on a Windows box without
+        pywinpty installed.
+        """
+        return JSONResponse(
+            {
+                "pty": pty_available() and services.ctx.get("terminals") is not None,
+                "shell": services.ctx.get("terminals") is not None,
+            }
+        )
+
     @router.get("/v1/terminal/sessions")
     async def list_terminals() -> JSONResponse:
         service = _terminals()
@@ -792,6 +808,94 @@ def build_router(services: Services) -> APIRouter:
 # --------------------------------------------------------------------------
 # websocket
 # --------------------------------------------------------------------------
+
+
+async def _pty_endpoint(websocket: WebSocket, services: Services) -> None:
+    """Bridge one websocket to one pty session for as long as both live."""
+    await websocket.accept()
+
+    service = services.ctx.get("terminals")
+    if service is None:
+        await websocket.send_json({"t": "fatal", "message": "the terminal plugin is not enabled"})
+        await websocket.close()
+        return
+    if not pty_available():
+        # Named rather than generic: the remedy is a pip install, and a user
+        # who is told "unavailable" has no way to discover that.
+        await websocket.send_json(
+            {
+                "t": "fatal",
+                "code": "no_pty",
+                "message": (
+                    "no pty on this machine — install pywinpty for full-screen "
+                    "programs, or use the shell terminal"
+                ),
+            }
+        )
+        await websocket.close()
+        return
+
+    session = None
+    pump: asyncio.Task[None] | None = None
+    try:
+        opening = await websocket.receive_json()
+        cols = max(20, min(500, int(opening.get("cols") or 80)))
+        rows = max(5, min(200, int(opening.get("rows") or 24)))
+
+        session = await service.open(owner="pty-ui", type="pty", name="panel", size=(cols, rows))
+        await websocket.send_json(
+            {"t": "ready", "id": session.id, "pid": session.channel.pid, "cwd": session.cwd}
+        )
+
+        async def drain() -> None:
+            """Forward output as it arrives.
+
+            Waits on the session rather than reading the channel: the service
+            already runs exactly one reader, and a second one steals chunks
+            from the first. That bug does not look like a bug — output still
+            arrives, just not all of it — which is why this goes through the
+            session even though reading the channel would be one line shorter.
+            """
+            while session.alive:
+                chunk = await session.follow(wait_s=30.0)
+                if chunk:
+                    await websocket.send_json({"t": "o", "d": chunk})
+            # Whatever landed between the last wait and the exit.
+            tail = session.drain()
+            if tail:
+                await websocket.send_json({"t": "o", "d": tail})
+            await websocket.send_json({"t": "exit", "code": session.channel.exit_code})
+
+        pump = asyncio.create_task(drain())
+
+        while True:
+            frame = await websocket.receive_json()
+            kind = frame.get("t")
+            if kind == "i":
+                await session.channel.write(str(frame.get("d", "")).encode("utf-8"))
+            elif kind == "r":
+                session.channel.resize(
+                    max(20, min(500, int(frame.get("cols") or cols))),
+                    max(5, min(200, int(frame.get("rows") or rows))),
+                )
+    except WebSocketDisconnect:
+        # The normal end: the pane closed or the tab went away.
+        return
+    except Exception:
+        logger.exception("pty socket failed")
+    finally:
+        if pump is not None:
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await pump
+        if session is not None:
+            # The pty dies with its socket. A session nobody can reach is a
+            # leaked shell, and there is no id here for anyone to reconnect
+            # with — the pipe backend is the one that survives a reload.
+            with contextlib.suppress(Exception):
+                await service.close(session.id, owner="pty-ui")
+        with contextlib.suppress(Exception):
+            await websocket.close()
 
 
 async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
@@ -1349,6 +1453,18 @@ def create_app(services: Services | None = None) -> FastAPI:
     @app.websocket("/v1/stream")
     async def stream(websocket: WebSocket) -> None:
         await _stream_endpoint(websocket, resolved)
+
+    @app.websocket("/v1/terminal/pty")
+    async def terminal_pty(websocket: WebSocket) -> None:
+        """A real terminal, streamed.
+
+        REST polling is right for the pipe backend, where a command settles and
+        returns a block of text. It is wrong for a pty: `vim` redraws on every
+        keystroke, so the round trip has to be a frame rather than a request,
+        and the connection has to carry a window size that changes when the
+        pane does.
+        """
+        await _pty_endpoint(websocket, resolved)
 
     @app.websocket("/v1/chat/stream")
     async def chat_stream(websocket: WebSocket) -> None:

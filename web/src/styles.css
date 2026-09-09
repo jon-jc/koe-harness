@@ -1993,3 +1993,111 @@ mark.find {
     width: 190px;
   }
 }
+
+/* ---------------------------------------------------------------- language */
+
+/*
+ * A two-state toggle rather than a dropdown. There are exactly two languages
+ * and both fit at rest, so a select costs a click and a menu to show what a
+ * pair of buttons shows for free — and, more to the point, the current
+ * language stops being visible at a glance, which is the one thing a language
+ * control is for.
+ */
+.lang {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.lang-opt {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.lang-opt + .lang-opt {
+  border-inline-start: 1px solid var(--border);
+}
+
+.lang-opt:hover {
+  color: var(--text);
+}
+
+.lang-opt.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------- terminal modes */
+
+.term-modes {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  padding: calc(var(--step) * 2) calc(var(--step) * 3);
+  border-block-end: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.term-modes .note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seg:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.term-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--step) * 3);
+  gap: calc(var(--step) * 2);
+}
+
+/* A class-level display beats the UA sheet's [hidden] rule, so restate it. */
+.term-body[hidden] {
+  display: none;
+}
+
+/*
+ * xterm measures its own container to decide the grid, so the element it
+ * mounts into has to have a real size before `fit()` runs — an unsized flex
+ * child reports zero and the terminal comes out one column wide.
+ */
+.pty-screen {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: calc(var(--step) * 2);
+}
+
+.pty-screen .xterm {
+  height: 100%;
+}
+
+.pty-screen .xterm-viewport {
+  /* Match the app's scrollbars rather than the platform's default. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}

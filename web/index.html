@@ -28,11 +28,16 @@
         <div class="spacer"></div>
 
         <div class="meta">
-          <span class="sr-only" id="t-ui-lang">表示言語</span>
-          <select class="select" id="ui-lang" aria-labelledby="t-ui-lang">
-            <option value="ja">日本語</option>
-            <option value="en">English</option>
-          </select>
+          <!-- A two-state toggle rather than a dropdown. There are exactly
+               two languages and both fit on screen, so a select costs a click
+               and a menu to show what a pair of buttons shows at rest — and
+               the current language stops being visible at a glance. -->
+          <div class="lang" role="radiogroup" aria-label="Language / 言語" id="ui-lang">
+            <button class="lang-opt" type="button" role="radio" data-lang="ja"
+                    aria-checked="false" lang="ja">日本語</button>
+            <button class="lang-opt" type="button" role="radio" data-lang="en"
+                    aria-checked="false" lang="en">EN</button>
+          </div>
           <button class="icon-btn" id="theme" type="button" aria-label="テーマ切替">◑</button>
           <button class="icon-btn" id="settings" type="button" aria-label="設定">⚙</button>
           <button class="icon-btn" id="help" type="button" aria-label="キーボードショートカット">?</button>
@@ -177,7 +182,19 @@
         <div class="view" id="view-chat" hidden></div>
 
         <!-- --------------------------------------------------- terminal -->
-        <div class="view" id="view-terminal" hidden></div>
+        <div class="view" id="view-terminal" hidden>
+          <div class="term-modes">
+            <div class="segmented" role="radiogroup" id="term-mode">
+              <button class="seg on" type="button" role="radio" data-mode="pty"
+                      aria-checked="true" id="term-mode-pty">対話</button>
+              <button class="seg" type="button" role="radio" data-mode="plain"
+                      aria-checked="false" id="term-mode-plain">簡易</button>
+            </div>
+            <span class="note" id="term-mode-hint"></span>
+          </div>
+          <div class="term-body" id="term-pty"></div>
+          <div class="term-body" id="term-plain" hidden></div>
+        </div>
 
         <!-- ------------------------------------------------------- code -->
         <div class="view" id="view-code" hidden></div>
@@ -189,6 +206,8 @@
          screen reader re-reading a churning line is unusable. -->
     <div class="sr-only" id="live-region" role="status" aria-live="polite"></div>
 
-    <script src="/static/app.js"></script>
+    <!-- A module, because the bundle is split: the terminal emulator is a
+         chunk this only fetches when someone opens that panel. -->
+    <script type="module" src="/static/app.js"></script>
   </body>
 </html>

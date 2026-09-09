@@ -44,14 +44,21 @@ the user's aliases, which for a harness is the right trade: a terminal that
 behaves the same on every machine is worth more here than one that feels like
 home on this one.
 
-## What this is not
+## Two backends, for two different readers
 
-There is no pty. Output is read from pipes, which covers everything
-non-interactive — builds, tests, git, REPL turns — and does not cover
-full-screen programs that drive a terminal directly (``vim``, ``top``,
-``htop``). Those see a non-tty stdout and either degrade or refuse. Adding
-ConPTY on Windows and ``pty`` elsewhere is a backend change, which is why
-backends are a seam rather than a branch in this file.
+``shell`` is pipes, and it is the one a model talks to: no escape sequences,
+a prompt sentinel we control, output that costs what it says it costs.
+
+``pty`` is a real terminal — ConPTY on Windows, ``pty`` elsewhere — and it is
+the one a person talks to. ``vim``, ``top`` and ``less` check ``isatty``, ask
+for a window size, and address the cursor; pipes make them degrade or refuse.
+Its output is raw: escape sequences are the payload, not noise, so nothing is
+stripped and no sentinel is injected. That output is only useful to something
+that can render it, which is why the pty path exists *alongside* an emulator
+in the client rather than instead of the pipe path.
+
+Neither is a fallback for the other. A model handed a pty pays for a screenful
+of ANSI it has to reason about; a person handed pipes cannot run an editor.
 """
 
 from __future__ import annotations
@@ -70,6 +77,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
+
+from koe.terminal.channels import (
+    Channel,
+    PipeChannel,
+    open_pty,
+    pty_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,22 +218,29 @@ class SendOutcome:
 
 
 class Backend(Protocol):
-    """Spawns the process behind a session.
+    """Opens the channel behind a session.
 
-    A protocol rather than a base class so a ConPTY backend, a container
-    backend, or a remote one can be dropped in without touching the service.
+    A protocol rather than a base class so a container backend or a remote one
+    can be dropped in without touching the service — which is exactly what the
+    pty backend below did.
     """
 
     #: The stable name callers open sessions by.
     type: str
 
-    async def spawn(self, cwd: Path) -> asyncio.subprocess.Process: ...
+    #: True when output is the payload rather than something to clean. A pty
+    #: session keeps its escape sequences and gets no prompt sentinel; a pipe
+    #: session has both stripped.
+    raw: bool
+
+    async def open(self, cwd: Path, size: tuple[int, int]) -> Channel: ...
 
 
 class ShellBackend:
-    """The local shell, over pipes."""
+    """The local shell, over pipes. The backend a model talks to."""
 
     type = "shell"
+    raw = False
 
     def __init__(self, command: list[str] | None = None) -> None:
         self._command = command or self._default_command()
@@ -259,7 +280,7 @@ class ShellBackend:
             return [os.environ.get("COMSPEC", "cmd.exe")]
         return [os.environ.get("SHELL", "/bin/bash"), "--norc", "--noprofile", "-i"]
 
-    async def spawn(self, cwd: Path) -> asyncio.subprocess.Process:
+    async def open(self, cwd: Path, size: tuple[int, int] = (80, 24)) -> Channel:
         env = dict(os.environ)
         # A prompt we can recognise, and no colour: escape sequences in a
         # buffer that is going to a model are noise it pays for by the token.
@@ -269,7 +290,7 @@ class ShellBackend:
         env["PS2"] = ""
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
-        return await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             *self._command,
             cwd=str(cwd),
             env=env,
@@ -277,6 +298,44 @@ class ShellBackend:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+        return PipeChannel(process)
+
+
+class PtyBackend:
+    """A real terminal. The backend a person talks to.
+
+    Deliberately keeps the user's rc files, where the shell backend discards
+    them: a person opening a terminal wants their aliases and their prompt,
+    and there is no sentinel here whose survival depends on suppressing them.
+    """
+
+    type = "pty"
+    raw = True
+
+    def __init__(self, command: list[str] | None = None) -> None:
+        self._command = command or self._default_command()
+
+    @staticmethod
+    def _default_command() -> list[str]:
+        """An interactive login shell, with the user's own configuration."""
+        if sys.platform == "win32":
+            base = ShellBackend._default_command()
+            # Drop --norc/--noprofile: the shell backend needs them so its
+            # prompt sentinel survives, and a human terminal does not.
+            return [base[0], "-i"] if base[0].lower().endswith("bash.exe") else base
+        return [os.environ.get("SHELL", "/bin/bash"), "-i"]
+
+    async def open(self, cwd: Path, size: tuple[int, int] = (80, 24)) -> Channel:
+        if not pty_available():
+            raise OSError(
+                "no pty on this machine — install pywinpty on Windows for "
+                "full-screen programs, or use the shell backend"
+            )
+        env = dict(os.environ)
+        # A real terminal, so programs that check will draw rather than refuse.
+        env["TERM"] = env.get("TERM") or "xterm-256color"
+        env.pop("NO_COLOR", None)
+        return await open_pty(self._command, str(cwd), env, size)
 
 
 @dataclass
@@ -288,7 +347,10 @@ class Session:
     type: str
     name: str
     cwd: str
-    process: asyncio.subprocess.Process
+    channel: Channel
+    #: True when output is the payload: a pty session is not cleaned and
+    #: gets no sentinel, because its escape sequences are the content.
+    raw: bool = False
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     #: Most recent output. A deque of chunks with a byte budget, so a runaway
@@ -304,11 +366,11 @@ class Session:
 
     @property
     def alive(self) -> bool:
-        return self.process.returncode is None
+        return self.channel.alive
 
     @property
     def exit_code(self) -> int | None:
-        return self.process.returncode
+        return self.channel.exit_code
 
     def append(self, text: str) -> None:
         self._buffer.append(text)
@@ -329,6 +391,29 @@ class Session:
     def peek(self) -> str:
         return "".join(self._buffer)
 
+    # `wait_s` rather than `timeout`: the linter reserves that name for a
+    # parameter forwarded to `asyncio.timeout`, and this one bounds a single
+    # wait rather than the whole call.
+    async def follow(self, *, wait_s: float = 30.0) -> str:
+        """Wait for output and return it, or "" when the session ends.
+
+        A streaming consumer waits here rather than reading the channel
+        itself, because there is exactly one reader — the service's pump — and
+        a second one silently steals chunks from the first. That bug is
+        invisible in a test that only checks the connection works: output
+        still arrives, just not all of it, and the half that went to the other
+        reader is simply never seen.
+        """
+        pending = self.drain()
+        if pending:
+            return pending
+        self._activity.clear()
+        try:
+            await asyncio.wait_for(self._activity.wait(), timeout=wait_s)
+        except TimeoutError:
+            return ""
+        return self.drain()
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -336,7 +421,8 @@ class Session:
             "type": self.type,
             "name": self.name,
             "cwd": self.cwd,
-            "pid": self.process.pid,
+            "pid": self.channel.pid,
+            "raw": self.raw,
             "alive": self.alive,
             "exit_code": self.exit_code,
             "created_at": self.created_at,
@@ -360,7 +446,14 @@ class TerminalService:
 
     # -- lifecycle ---------------------------------------------------------
 
-    async def open(self, *, owner: str = "default", type: str = "shell", name: str = "") -> Session:
+    async def open(
+        self,
+        *,
+        owner: str = "default",
+        type: str = "shell",
+        name: str = "",
+        size: tuple[int, int] = (80, 24),
+    ) -> Session:
         backend = self._backends.get(type)
         if backend is None:
             known = ", ".join(sorted(self._backends)) or "none"
@@ -377,8 +470,8 @@ class TerminalService:
             )
 
         try:
-            process = await backend.spawn(self._cwd)
-        except (OSError, ValueError) as exc:
+            channel = await backend.open(self._cwd, size)
+        except (OSError, ValueError, ImportError) as exc:
             raise TerminalFailure(
                 TerminalError.SPAWN_FAILED, f"could not start a {type} session: {exc}"
             ) from exc
@@ -389,29 +482,33 @@ class TerminalService:
             type=type,
             name=name or f"session {len(self._sessions) + 1}",
             cwd=str(self._cwd),
-            process=process,
+            channel=channel,
+            raw=getattr(backend, "raw", False),
         )
         session._reader = asyncio.create_task(self._pump(session))
         self._sessions[session.id] = session
 
-        # Before the banner wait, so the first prompt anyone sees is already
-        # the sentinel rather than whatever the shell chose for itself.
-        if process.stdin is not None:
-            with contextlib.suppress(OSError, ConnectionError):
-                process.stdin.write(INIT_COMMAND.encode("utf-8"))
-                await process.stdin.drain()
+        # A raw session is handed straight to a terminal emulator, which
+        # wants the banner, the prompt and every escape the shell emits. Only
+        # the pipe path installs a sentinel and settles before returning.
+        if not session.raw:
+            # Before the banner wait, so the first prompt anyone sees is
+            # already the sentinel rather than whatever the shell chose.
+            with contextlib.suppress(OSError, ConnectionError, BrokenPipeError):
+                await channel.write(INIT_COMMAND.encode("utf-8"))
 
-        # Settle before returning, so the caller gets a quiet terminal rather
-        # than a banner arriving in the middle of their first command.
-        #
-        # Draining once on the first sentinel is not enough, and getting that
-        # wrong desynchronized the buffer by a whole command: the shell echoes
-        # the init line, so the sentinel can appear while that echo is still
-        # in flight, and whatever is left lands on the *next* send's output.
-        # Waiting for silence after the prompt is what makes the drain total.
-        await self._quiet(session, idle_ms=IDLE_MS, budget_s=5.0)
-        await asyncio.sleep(IDLE_GRACE_MS / 1000.0 / 5)
-        session.drain()
+            # Settle before returning, so the caller gets a quiet terminal
+            # rather than a banner arriving mid-command.
+            #
+            # Draining once on the first sentinel is not enough, and getting
+            # that wrong desynchronized the buffer by a whole command: the
+            # shell echoes the init line, so the sentinel can appear while
+            # that echo is still in flight, and whatever is left lands on the
+            # *next* send's output. Waiting for silence after the prompt is
+            # what makes the drain total.
+            await self._quiet(session, idle_ms=IDLE_MS, budget_s=5.0)
+            await asyncio.sleep(IDLE_GRACE_MS / 1000.0 / 5)
+            session.drain()
         logger.info("terminal opened", extra={"session": session.id, "owner": owner})
         return session
 
@@ -423,12 +520,9 @@ class TerminalService:
         captured, which is the difference between a background build you can
         read later and one whose output is silently discarded.
         """
-        stream = session.process.stdout
-        if stream is None:
-            return
         try:
             while True:
-                chunk = await stream.read(4096)
+                chunk = await session.channel.read()
                 if not chunk:
                     break
                 session.append(chunk.decode("utf-8", errors="replace"))
@@ -451,25 +545,23 @@ class TerminalService:
             session._reader.cancel()
             await asyncio.gather(session._reader, return_exceptions=True)
 
-        # Close stdin before signalling. A shell reading a closed stdin exits
-        # on its own, which is a cleaner end than a signal — and leaving the
-        # pipe open means asyncio finalizes the transport during garbage
-        # collection instead, after the loop has gone, which surfaces as
-        # "Event loop is closed" from a destructor nobody can catch.
-        if session.process.stdin is not None:
-            with contextlib.suppress(Exception):
-                session.process.stdin.close()
+        # Close the write side before signalling. A shell reading a closed
+        # stdin exits on its own, which is a cleaner end than a signal — and
+        # leaving the pipe open means asyncio finalizes the transport during
+        # garbage collection instead, after the loop has gone, which surfaces
+        # as "Event loop is closed" from a destructor nobody can catch.
+        await session.channel.aclose()
 
         if session.alive:
-            session.process.terminate()
+            session.channel.terminate()
             try:
-                await asyncio.wait_for(session.process.wait(), timeout=5.0)
+                await asyncio.wait_for(session.channel.wait(), timeout=5.0)
             except TimeoutError:
                 # A shell ignoring SIGTERM is usually one with a foreground
                 # child that ignored it too. Killing the shell is what we can
                 # reach from here.
-                session.process.kill()
-                await session.process.wait()
+                session.channel.kill()
+                await session.channel.wait()
 
         # Give the proactor a turn to finish tearing the pipes down, so the
         # transports are collected inside the loop's lifetime rather than
@@ -507,9 +599,6 @@ class TerminalService:
             raise TerminalFailure(
                 TerminalError.SEND_ACTIVE, "another send is still settling on this session"
             )
-        if session.process.stdin is None:
-            raise TerminalFailure(TerminalError.SESSION_EXITED, "session has no stdin")
-
         session._sending = True
         session.last_used = time.time()
         started = time.perf_counter()
@@ -518,9 +607,10 @@ class TerminalService:
             # produced it, not to the command about to run.
             session.drain()
             payload = text + ("\n" if submit and not text.endswith("\n") else "")
-            session.process.stdin.write(payload.encode("utf-8"))
-            await session.process.stdin.drain()
-            reason = await self._quiet(session, idle_ms=IDLE_MS, budget_s=timeout_s)
+            await session.channel.write(payload.encode("utf-8"))
+            reason = await self._quiet(
+                session, idle_ms=IDLE_MS, budget_s=timeout_s, expect_prompt=not session.raw
+            )
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise TerminalFailure(
                 TerminalError.SESSION_EXITED, f"session closed while writing: {exc}"

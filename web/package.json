@@ -5,12 +5,16 @@
   "description": "Realtime voice client for the koe harness",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --format=iife --target=es2020 --charset=utf8 --minify --sourcemap --outfile=dist/app.js",
-    "dev": "esbuild src/main.ts --bundle --format=iife --target=es2020 --charset=utf8 --sourcemap --watch --outfile=dist/app.js",
+    "build": "esbuild src/main.ts --bundle --format=esm --splitting --target=es2020 --charset=utf8 --minify --sourcemap --outdir=dist --entry-names=app --chunk-names=chunk-[hash]",
+    "dev": "esbuild src/main.ts --bundle --format=esm --splitting --target=es2020 --charset=utf8 --sourcemap --watch --outdir=dist --entry-names=app --chunk-names=chunk-[hash]",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
   }
 }
