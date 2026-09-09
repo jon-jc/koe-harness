@@ -103,6 +103,17 @@ class WorkspaceError(Exception):
         self.code = code
 
 
+def _dominant_newline(text: str) -> str:
+    """The line ending a file mostly uses.
+
+    Whichever is more common wins, so one stray ending in a mixed file does
+    not flip the whole convention.
+    """
+    crlf = text.count("\r\n")
+    lf = text.count("\n") - crlf
+    return "\r\n" if crlf > lf else "\n"
+
+
 def _is_absolute(text: str) -> bool:
     """Whether a client-supplied path is absolute, on any platform.
 
@@ -251,7 +262,13 @@ class Workspace:
         if b"\x00" in raw[:8192]:
             raise WorkspaceError("binary", f"{relative!r} is a binary file")
 
-        text = raw.decode("utf-8", errors="replace")
+        # Normalized to LF before anyone sees it. A model writes LF and a
+        # Windows-authored file holds CRLF, so matching without this makes
+        # `edit_file` fail on exactly the files a Windows user has — while
+        # looking, in every log, as though the text simply was not there.
+        # The original ending is restored on write, so the file keeps its
+        # convention and nothing in the repository churns.
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
         all_lines = text.splitlines()
         total = len(all_lines)
 
@@ -346,6 +363,112 @@ class Workspace:
                 if not name.startswith("."):
                     found.append(Path(base) / name)
         return found
+
+    # -- writing -----------------------------------------------------------
+
+    def version(self, relative: str) -> str:
+        """A cheap fingerprint of a file's current state.
+
+        Size and mtime rather than a hash of the contents: the question this
+        answers is "has this changed since I read it", and stat is orders of
+        magnitude cheaper than hashing a file on every guarded write. It can
+        miss a change that preserves both — a same-length edit inside one
+        filesystem timestamp tick — which is a real gap and an acceptable one
+        for a guard whose purpose is catching *concurrent editors*, not
+        defeating a deliberate forgery.
+
+        An absent file has a version too, and it is the empty string. That is
+        what lets "I checked, it was not there" be a state the guard can
+        enforce rather than an absence of information.
+        """
+        try:
+            target = self.resolve(relative)
+        except WorkspaceError:
+            raise
+        if not target.is_file():
+            return ""
+        stat = target.stat()
+        return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+    def write(self, relative: str, text: str, *, expect: str | None = None) -> FileView:
+        """Replace a file's contents, atomically.
+
+        `expect` is the version the caller last saw. When supplied it is
+        checked immediately before the replace and the write is refused if it
+        no longer matches, which is what makes "read, then write" mean
+        something under a concurrent editor.
+
+        The write itself goes to a temporary file in the same directory and is
+        then renamed over the target. A partial write that crashed halfway
+        leaves the original intact; writing in place leaves a truncated file
+        and no way to tell it happened.
+        """
+        target = self.resolve(relative)
+        if target.is_dir():
+            raise WorkspaceError("not_a_file", f"{relative!r} is a directory")
+
+        if expect is not None:
+            current = self.version(relative)
+            if current != expect:
+                raise WorkspaceError(
+                    "stale",
+                    f"{relative!r} changed since it was read — read it again, then retry",
+                )
+
+        # Restore whatever the file already used. Rewriting a CRLF file with
+        # LF endings turns a one-line change into a diff of the whole file.
+        if target.is_file():
+            try:
+                existing = target.read_bytes()[:MAX_READ_BYTES].decode("utf-8", "replace")
+                newline = _dominant_newline(existing)
+            except OSError:
+                newline = "\n"
+            if newline != "\n":
+                text = text.replace("\r\n", "\n").replace("\n", newline)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Same directory, because os.replace is only atomic within a
+        # filesystem and a temp directory may be on another one.
+        temporary = target.with_name(f".{target.name}.koe-{os.getpid()}.tmp")
+        try:
+            temporary.write_text(text, encoding="utf-8", newline="")
+            # `replace` rather than `rename`: rename refuses to overwrite on
+            # Windows, which is precisely the case this is for.
+            temporary.replace(target)
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            raise WorkspaceError("write_failed", f"could not write {relative!r}: {exc}") from exc
+
+        return self.read(relative)
+
+    def edit(
+        self, relative: str, old: str, new: str, *, expect: str | None = None
+    ) -> tuple[FileView, int]:
+        """Replace one exact occurrence of `old` with `new`.
+
+        Exact string replacement rather than line numbers, and it refuses when
+        `old` appears more than once. Both are the same decision: a line number
+        is stale the moment anything above it changes, and an ambiguous match
+        edited at the first occurrence is the failure mode where a tool
+        silently changes the wrong thing. Making the caller supply enough
+        surrounding text to be unique turns that into a refusal it can fix.
+        """
+        if not old:
+            raise WorkspaceError("empty_match", "the text to replace must not be empty")
+
+        view = self.read(relative)
+        occurrences = view.text.count(old)
+        if occurrences == 0:
+            raise WorkspaceError("no_match", f"the text to replace does not appear in {relative!r}")
+        if occurrences > 1:
+            raise WorkspaceError(
+                "ambiguous",
+                f"the text to replace appears {occurrences} times in {relative!r} — "
+                "include enough surrounding lines to make it unique",
+            )
+
+        updated = self.write(relative, view.text.replace(old, new, 1), expect=expect)
+        return updated, occurrences
 
     # -- summary -----------------------------------------------------------
 

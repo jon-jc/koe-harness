@@ -64,8 +64,8 @@ from koe.terminal import TerminalFailure, terminal_plugin
 from koe.text.script import Language
 from koe.text.tokenize import mecab_available
 from koe.tools import ToolRegistry
-from koe.tools.builtin import meeting_tools, workspace_tools
-from koe.workspace import Workspace, WorkspaceError
+from koe.tools.builtin import meeting_tools, workspace_tools, workspace_write_tools
+from koe.workspace import Workspace, WorkspaceError, read_before_edit
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,26 @@ class Services:
             "workspace-tools",
             workspace_tools,
             description="Read-only file access for the assistant: list, read, glob, grep.",
+            inject=("tools", "workspace"),
+        )
+        # Order matters for readability rather than correctness — the kernel
+        # activates on dependencies, not on registration order — but mounting
+        # the guard immediately before the tools it guards is how the listing
+        # reads to whoever opens the plugins panel.
+        self.plugins.add_builtin(
+            "read-before-edit",
+            read_before_edit,
+            description=(
+                "Refuses a write to a file the assistant has not read, and a "
+                "write to one that changed since. Turning this off leaves the "
+                "write tools unguarded."
+            ),
+            inject=("tools", "workspace"),
+        )
+        self.plugins.add_builtin(
+            "workspace-write-tools",
+            workspace_write_tools,
+            description="Lets the assistant write and edit files in the workspace.",
             inject=("tools", "workspace"),
         )
         self.plugins.add_builtin(

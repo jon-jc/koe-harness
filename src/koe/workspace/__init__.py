@@ -6,6 +6,7 @@ containment check lives, because two implementations of that check means one
 of them is wrong.
 """
 
+from koe.workspace.policy import Observation, ObservationLog, read_before_edit
 from koe.workspace.service import (
     IGNORED_DIRS,
     LANGUAGES,
@@ -22,6 +23,9 @@ __all__ = [
     "MAX_READ_BYTES",
     "Entry",
     "FileView",
+    "Observation",
+    "ObservationLog",
     "Workspace",
     "WorkspaceError",
+    "read_before_edit",
 ]

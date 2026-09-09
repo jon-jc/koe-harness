@@ -287,6 +287,69 @@ async def test_without_a_policy_the_tool_simply_runs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_post_execute_fires_for_a_failure_too() -> None:
+    """A listener that only sees successes cannot audit anything.
+
+    This shipped wrong: failures returned early and never reached the event,
+    so the read-before-edit policy could not record that a read failed because
+    the file was absent — which is the observation that authorizes creating it.
+    """
+    ctx = Context(name="test")
+    registry = ToolRegistry(ctx)
+
+    async def explode(args: dict[str, Any], run: ToolRun) -> Any:
+        raise RuntimeError("boom")
+
+    registry.register(spec(execute=explode))
+    seen: list[Any] = []
+
+    async def audit(tool: ToolSpec, run: ToolRun, result: Any) -> None:
+        seen.append((tool.name, result.ok, result.error))
+
+    ctx.on("tools/post-execute", audit)
+    await registry.call("echo")
+
+    assert seen == [("echo", False, ToolError.FAILED)]
+
+
+@pytest.mark.asyncio
+async def test_post_execute_fires_for_a_denial() -> None:
+    """A refused call is exactly what an audit log most wants to see."""
+    ctx = Context(name="test")
+    registry = ToolRegistry(ctx)
+    registry.register(spec(dangerous=True))
+    seen: list[Any] = []
+
+    async def gate(tool: ToolSpec, run: ToolRun) -> Any:
+        return Denial("no") if tool.dangerous else None
+
+    async def audit(tool: ToolSpec, run: ToolRun, result: Any) -> None:
+        seen.append(result.error)
+
+    ctx.on("tools/pre-execute", gate)
+    ctx.on("tools/post-execute", audit)
+    await registry.call("echo")
+
+    assert seen == [ToolError.DENIED]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_tool_does_not_fire_post_execute() -> None:
+    """There is no tool to hand the listener, so there is nothing to report."""
+    ctx = Context(name="test")
+    registry = ToolRegistry(ctx)
+    seen: list[Any] = []
+
+    async def audit(tool: ToolSpec, run: ToolRun, result: Any) -> None:
+        seen.append(tool)
+
+    ctx.on("tools/post-execute", audit)
+    await registry.call("nonesuch")
+
+    assert seen == []
+
+
+@pytest.mark.asyncio
 async def test_post_execute_observes_the_result() -> None:
     ctx = Context(name="test")
     registry = ToolRegistry(ctx)
