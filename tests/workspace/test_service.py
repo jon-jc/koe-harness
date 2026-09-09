@@ -42,11 +42,27 @@ def test_a_traversal_is_refused(tree: Path) -> None:
     assert caught.value.code == "outside_workspace"
 
 
-def test_an_absolute_path_is_refused(tree: Path) -> None:
-    """A client that sends an absolute path is not asking for the workspace."""
-    outside = "C:/Windows/win.ini" if sys.platform == "win32" else "/etc/passwd"
-    with pytest.raises(WorkspaceError):
+@pytest.mark.parametrize(
+    "outside",
+    ["/etc/passwd", "C:/Windows/win.ini", "c:/windows", "//server/share/file", "\\server\share"],
+)
+def test_an_absolute_path_is_refused_on_every_platform(tree: Path, outside: str) -> None:
+    """Every form, everywhere — a server can be sent a Windows path on Linux.
+
+    Quietly reinterpreting an absolute path as relative is contained but
+    wrong: the caller asked for one file and gets a different one. This
+    shipped broken and only Linux caught it, because on Windows a
+    drive-absolute path fails the containment check by accident.
+    """
+    with pytest.raises(WorkspaceError) as caught:
         Workspace(tree).resolve(outside)
+    assert caught.value.code == "outside_workspace"
+
+
+def test_a_relative_path_that_looks_absolute_is_still_refused(tree: Path) -> None:
+    """No leading-slash tolerance: refusing beats guessing what was meant."""
+    with pytest.raises(WorkspaceError):
+        Workspace(tree).resolve("/src/main.py")
 
 
 def test_a_traversal_that_returns_inside_is_allowed(tree: Path) -> None:

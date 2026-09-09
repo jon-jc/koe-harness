@@ -103,6 +103,20 @@ class WorkspaceError(Exception):
         self.code = code
 
 
+def _is_absolute(text: str) -> bool:
+    """Whether a client-supplied path is absolute, on any platform.
+
+    Deliberately not ``Path(text).is_absolute()``: that answers for the host
+    it runs on, and a server can receive a Windows path while running on
+    Linux. Every form is refused everywhere, so the same request is refused
+    identically wherever koe is deployed.
+    """
+    if text.startswith("/"):  # POSIX absolute, and UNC once slashes are folded
+        return True
+    # A drive letter: "C:", "c:/x". Two characters is enough to decide.
+    return len(text) >= 2 and text[1] == ":" and text[0].isalpha()
+
+
 @dataclass(frozen=True, slots=True)
 class Entry:
     """One directory entry."""
@@ -156,14 +170,30 @@ class Workspace:
     def resolve(self, relative: str) -> Path:
         """Resolve a workspace-relative path, or refuse it.
 
-        The check is deliberately made after resolution. Before resolution,
+        Two checks, in this order, and the order is the whole design.
+
+        **An absolute path is refused outright**, before anything else touches
+        it. Quietly reinterpreting ``/etc/passwd`` as a path *relative to the
+        workspace* is contained — it lands under the root and cannot escape —
+        and it is still wrong: the caller asked for one file and would be
+        handed a different one, or a confusing "not found" for a file that
+        plainly exists. This shipped broken and only Linux caught it: on
+        Windows a drive-absolute path replaces the root during joining and
+        fails the containment check by accident, so the same bug passed there.
+
+        **Everything else is checked after resolution.** Before resolution,
         ``notes/../../etc/passwd`` and ``notes/link-to-etc`` look completely
         different; afterwards they are the same problem, and one comparison
-        catches both.
+        catches both — along with the 8.3 short names and case folding that a
+        textual check on Windows misses.
         """
-        text = (relative or "").strip().replace("\\", "/").lstrip("/")
+        text = (relative or "").strip().replace("\\", "/")
         if not text or text == ".":
             return self._root
+        if _is_absolute(text):
+            raise WorkspaceError(
+                "outside_workspace", f"{relative!r} is absolute; paths must be workspace-relative"
+            )
 
         candidate = (self._root / text).resolve()
         if candidate != self._root and self._root not in candidate.parents:
