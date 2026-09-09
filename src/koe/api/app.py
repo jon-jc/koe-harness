@@ -46,6 +46,7 @@ from koe.minutes.generator import MinutesGenerator
 from koe.minutes.schema import Minutes
 from koe.pipeline.session import SessionConfig, StreamingSession
 from koe.pipeline.vad import VADConfig
+from koe.plugins import PluginManager
 from koe.providers.credentials import (
     PROVIDERS_BY_ID,
     CredentialError,
@@ -60,6 +61,9 @@ from koe.telemetry.ledger import BudgetExceeded, CostLedger
 from koe.telemetry.metrics import METRICS, Metrics, configure_logging
 from koe.text.script import Language
 from koe.text.tokenize import mecab_available
+from koe.tools import ToolRegistry
+from koe.tools.builtin import meeting_tools, workspace_tools
+from koe.workspace import Workspace, WorkspaceError
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +88,12 @@ class Services:
     diarizer: Any
     settings: Settings = field(default_factory=get_settings)
     credentials: CredentialStore = field(default_factory=CredentialStore)
+    #: The tool registry every agent surface dispatches through.
+    tools: ToolRegistry = field(init=False, repr=False)
+    #: File access, fenced to one directory tree.
+    workspace: Workspace = field(default_factory=Workspace)
+    #: Discovery and lifecycle for everything mounted on the kernel.
+    plugins: PluginManager = field(init=False, repr=False)
     ledger: CostLedger = field(default_factory=CostLedger)
     metrics: Metrics = field(default_factory=lambda: METRICS)
     #: Bounds concurrent streaming sessions. Each holds an audio buffer and a
@@ -101,6 +111,44 @@ class Services:
         self.refresh_llm()
         self._idle = asyncio.Event()
         self._idle.set()
+        self._mount_plugins()
+
+    def _mount_plugins(self) -> None:
+        """Publish the harness services, then mount everything that uses them.
+
+        Order matters and is the whole reason this is one method: the tool
+        registry and the workspace go on the context *first*, because a plugin
+        declaring `inject=["tools"]` is only allowed to run once that service
+        exists. Mounting the plugins first would leave every one of them
+        waiting for a service that arrives a line later.
+        """
+        self.tools = ToolRegistry(self.ctx)
+        self.ctx.provide("tools", self.tools, replace=True)
+        self.ctx.provide("workspace", self.workspace, replace=True)
+
+        from koe.desktop.paths import config_dir, data_dir
+
+        self.plugins = PluginManager(
+            self.ctx,
+            directory=data_dir() / "plugins",
+            state=config_dir() / "plugins.json",
+        )
+        # First-party tool groups are plugins like any other, and can be
+        # turned off from the same panel.
+        self.plugins.add_builtin(
+            "workspace-tools",
+            workspace_tools,
+            description="Read-only file access for the assistant: list, read, glob, grep.",
+            inject=("tools", "workspace"),
+        )
+        self.plugins.add_builtin(
+            "meeting-tools",
+            meeting_tools,
+            description="Lets the assistant read this session's transcript and 議事録.",
+            inject=("tools",),
+        )
+        self.plugins.discover()
+        self.plugins.activate_all()
 
     def refresh_llm(self) -> str:
         """Point the LLM service at whichever credential is configured.
@@ -207,6 +255,18 @@ class Services:
 # --------------------------------------------------------------------------
 # schemas
 # --------------------------------------------------------------------------
+
+
+class PluginToggle(BaseModel):
+    """Turn one plugin on or off."""
+
+    enabled: bool
+
+
+class ToolCallRequest(BaseModel):
+    """Arguments for a direct tool invocation."""
+
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -456,6 +516,90 @@ def build_router(services: Services) -> APIRouter:
         services.metrics.increment(f"credentials.verify.{result.status.value}")
         return JSONResponse({"provider": info.to_dict()})
 
+    # ----------------------------------------------------------------- plugins
+
+    @router.get("/v1/plugins")
+    async def list_plugins() -> JSONResponse:
+        """Everything mounted on the kernel, first-party tools included."""
+        return JSONResponse(services.plugins.to_dict())
+
+    @router.put("/v1/plugins/{name}")
+    async def set_plugin_enabled(name: str, request: PluginToggle) -> JSONResponse:
+        """Enable or disable a plugin, taking effect immediately.
+
+        Disabling unmounts: the plugin's tools, listeners and services are gone
+        when this returns, not merely marked inactive.
+        """
+        try:
+            record = services.plugins.set_enabled(name, request.enabled)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"unknown plugin {name!r}") from None
+        services.metrics.increment(f"plugins.{'enabled' if request.enabled else 'disabled'}")
+        return JSONResponse({"plugin": record.to_dict(), "tools": services.tools.describe()})
+
+    @router.post("/v1/plugins/reload")
+    async def reload_plugins() -> JSONResponse:
+        """Re-scan the plugins directory, unmounting anything that disappeared."""
+        services.plugins.reload()
+        return JSONResponse(services.plugins.to_dict())
+
+    # ------------------------------------------------------------------- tools
+
+    @router.get("/v1/tools")
+    async def list_tools() -> JSONResponse:
+        """Registered tools, with the host-only fields an operator needs."""
+        return JSONResponse({"tools": services.tools.describe()})
+
+    @router.post("/v1/tools/{name}")
+    async def call_tool(name: str, request: ToolCallRequest) -> JSONResponse:
+        """Run one tool directly.
+
+        Exists so a tool can be exercised without a model in the loop, which is
+        what makes a misbehaving tool debuggable. It runs the same guarded
+        pipeline, so a policy that would refuse the model refuses this too.
+        """
+        result = await services.tools.call(name, request.arguments, owner="operator")
+        services.metrics.increment(f"tools.{'ok' if result.ok else 'error'}")
+        return JSONResponse(result.to_dict())
+
+    # --------------------------------------------------------------- workspace
+
+    @router.get("/v1/fs/tree")
+    async def fs_tree(path: str = "") -> JSONResponse:
+        """One directory of the workspace."""
+        try:
+            entries = services.workspace.list_dir(path)
+        except WorkspaceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(
+            {
+                "path": path,
+                "entries": [entry.to_dict() for entry in entries],
+                **services.workspace.info(),
+            }
+        )
+
+    @router.get("/v1/fs/file")
+    async def fs_file(path: str) -> JSONResponse:
+        """One file, bounded, with the language token a highlighter wants."""
+        try:
+            view = services.workspace.read(path)
+        except WorkspaceError as exc:
+            # 404 for a missing file, 400 for one we refuse to serve: the
+            # client shows a different thing for "gone" than for "binary".
+            status = 404 if exc.code == "not_found" else 400
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return JSONResponse(view.to_dict())
+
+    @router.get("/v1/fs/search")
+    async def fs_search(q: str, glob: str = "") -> JSONResponse:
+        """Regex search across the workspace."""
+        try:
+            hits = services.workspace.grep(q, glob=glob or None)
+        except WorkspaceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"query": q, "hits": hits})
+
     @router.post("/v1/minutes", response_model=MinutesResponse)
     async def minutes(request: MinutesRequest) -> MinutesResponse:
         generator = MinutesGenerator(services.llm)
@@ -585,6 +729,7 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
         _record_spend(services, active)
         last_transcript = transcript
         session = None
+        _publish_meeting(services, transcript)
         enqueue(
             {
                 "type": "transcript",
@@ -706,6 +851,9 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
                         enqueue({"type": "error", "message": f"minutes failed: {exc}"})
                         continue
                     services.metrics.increment("minutes.generated")
+                    services.ctx.provide(
+                        "last_minutes", outcome.minutes.model_dump(mode="json"), replace=True
+                    )
                     enqueue(
                         {
                             "type": "minutes",
@@ -722,6 +870,7 @@ async def _run_session(websocket: WebSocket, services: Services) -> None:
                 elif action == "stop":
                     if session is not None:
                         transcript = await session.finish()
+                        _publish_meeting(services, transcript)
                         await websocket.send_json(
                             {
                                 "type": "transcript",
@@ -817,6 +966,33 @@ def _record_spend(services: Services, session: StreamingSession) -> None:
 # --------------------------------------------------------------------------
 # app
 # --------------------------------------------------------------------------
+
+
+def _publish_meeting(services: Services, transcript: Any) -> None:
+    """Make the finished meeting readable by tools and plugins.
+
+    Published on the context rather than held on `Services` so a plugin can
+    reach it through the same `ctx.get` every other service uses — and so a
+    plugin that wants to react can watch the service appear instead of
+    polling. `replace=True` because a second meeting supersedes the first.
+    """
+    lines = [
+        f"[{seg.start:.0f}s] {seg.speaker or '-'}: {seg.text}" for seg in transcript.final_segments
+    ]
+    services.ctx.provide("last_transcript", "\n".join(lines), replace=True)
+    services.ctx.provide(
+        "last_segments",
+        [
+            {
+                "text": seg.text,
+                "start": round(seg.start, 2),
+                "end": round(seg.end, 2),
+                "speaker": seg.speaker or "",
+            }
+            for seg in transcript.final_segments
+        ],
+        replace=True,
+    )
 
 
 def _clamp(value: Any, low: float, high: float, default: float) -> float:
