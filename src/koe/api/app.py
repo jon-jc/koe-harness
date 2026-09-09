@@ -59,6 +59,7 @@ from koe.routing.budget import Budget, Priority
 from koe.routing.router import Router
 from koe.telemetry.ledger import BudgetExceeded, CostLedger
 from koe.telemetry.metrics import METRICS, Metrics, configure_logging
+from koe.terminal import TerminalFailure, terminal_plugin
 from koe.text.script import Language
 from koe.text.tokenize import mecab_available
 from koe.tools import ToolRegistry
@@ -145,6 +146,15 @@ class Services:
             "meeting-tools",
             meeting_tools,
             description="Lets the assistant read this session's transcript and 議事録.",
+            inject=("tools",),
+        )
+        self.plugins.add_builtin(
+            "terminal",
+            terminal_plugin,
+            description=(
+                "Persistent shell sessions, for the terminal panel and for the "
+                "assistant. Turning this off removes both."
+            ),
             inject=("tools",),
         )
         self.plugins.discover()
@@ -255,6 +265,20 @@ class Services:
 # --------------------------------------------------------------------------
 # schemas
 # --------------------------------------------------------------------------
+
+
+class TerminalOpen(BaseModel):
+    """Open a terminal session."""
+
+    name: str = ""
+
+
+class TerminalSend(BaseModel):
+    """Write to a session and wait for it to settle."""
+
+    text: str
+    #: Bounded so a client cannot pin a request thread indefinitely.
+    timeout_s: float = Field(default=30.0, ge=0.5, le=300.0)
 
 
 class PluginToggle(BaseModel):
@@ -561,6 +585,72 @@ def build_router(services: Services) -> APIRouter:
         result = await services.tools.call(name, request.arguments, owner="operator")
         services.metrics.increment(f"tools.{'ok' if result.ok else 'error'}")
         return JSONResponse(result.to_dict())
+
+    # ---------------------------------------------------------------- terminal
+
+    def _terminals() -> Any:
+        """The terminal service, or a 503 saying why there isn't one.
+
+        503 rather than 404: the endpoint exists and the capability is simply
+        not mounted, which is a different thing for a client to show than a
+        path that was never real.
+        """
+        service = services.ctx.get("terminals")
+        if service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="the terminal plugin is not enabled",
+            )
+        return service
+
+    @router.get("/v1/terminal/sessions")
+    async def list_terminals() -> JSONResponse:
+        service = _terminals()
+        return JSONResponse(
+            {"sessions": [session.to_dict() for session in service.list(owner="ui")]}
+        )
+
+    @router.post("/v1/terminal/sessions")
+    async def open_terminal(request: TerminalOpen) -> JSONResponse:
+        service = _terminals()
+        try:
+            session = await service.open(owner="ui", name=request.name)
+        except TerminalFailure as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(session.to_dict())
+
+    @router.post("/v1/terminal/sessions/{session_id}/send")
+    async def send_to_terminal(session_id: str, request: TerminalSend) -> JSONResponse:
+        service = _terminals()
+        try:
+            outcome = await service.send(
+                session_id, request.text, owner="ui", timeout_s=request.timeout_s
+            )
+        except TerminalFailure as exc:
+            # 409 for "your request conflicts with the session's state" —
+            # a send already running, a shell that exited — and 404 for a
+            # session that is not there. Both are the client's to act on.
+            status = 404 if exc.code.value in {"no_session", "foreign_session"} else 409
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return JSONResponse(outcome.to_dict())
+
+    @router.get("/v1/terminal/sessions/{session_id}/output")
+    async def read_terminal(session_id: str) -> JSONResponse:
+        """Output since the last read. Polled by the panel while a command runs."""
+        service = _terminals()
+        try:
+            return JSONResponse({"output": service.read(session_id, owner="ui")})
+        except TerminalFailure as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.delete("/v1/terminal/sessions/{session_id}")
+    async def close_terminal(session_id: str) -> JSONResponse:
+        service = _terminals()
+        try:
+            session = await service.close(session_id, owner="ui")
+        except TerminalFailure as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return JSONResponse(session.to_dict())
 
     # --------------------------------------------------------------- workspace
 
