@@ -23,12 +23,20 @@
  */
 
 import "./styles.css";
+// xterm's stylesheet, imported statically even though the emulator itself is
+// lazy. esbuild emits a CSS chunk for a dynamic import but nothing injects the
+// <link> for it, so the terminal would open unstyled. 4 KB in the base sheet
+// is the cost of that being reliable; the 280 KB of JavaScript stays lazy,
+// which is the part that matters.
+import "@xterm/xterm/css/xterm.css";
 
 import { AudioCapture, CaptureError } from "./audio";
 import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
 import { ChatPanel } from "./panels/chat";
 import { CodePanel } from "./panels/code";
+import { CommandPalette, type Command } from "./palette";
+import { PtyPanel } from "./panels/pty";
 import { TerminalPanel } from "./panels/terminal";
 import * as prefs from "./prefs";
 import { SettingsDialog, ShortcutsDialog, type SettingsHost } from "./settings";
@@ -189,6 +197,9 @@ class App {
   private view: WorkspaceView = "meeting";
   private chat: ChatPanel | null = null;
   private terminal: TerminalPanel | null = null;
+  private pty: PtyPanel | null = null;
+  private termMode: "pty" | "plain" = "pty";
+  private ptyAvailable = true;
   private code: CodePanel | null = null;
   private theme: Theme = loadTheme();
   private tickTimer = 0;
@@ -213,7 +224,9 @@ class App {
     side: el<HTMLDivElement>("side"),
     stats: el<HTMLDivElement>("stats"),
     asrLang: el<HTMLSelectElement>("asr-lang"),
-    uiLang: el<HTMLSelectElement>("ui-lang"),
+    uiLang: el<HTMLElement>("ui-lang"),
+    termMode: el<HTMLElement>("term-mode"),
+    termModeHint: el<HTMLElement>("term-mode-hint"),
     themeBtn: el<HTMLButtonElement>("theme"),
     settingsBtn: el<HTMLButtonElement>("settings"),
     helpBtn: el<HTMLButtonElement>("help"),
@@ -235,6 +248,9 @@ class App {
     this.settingsHost(),
   );
   private readonly shortcuts = new ShortcutsDialog(strings(detectUILang()));
+  private readonly palette = new CommandPalette(strings(detectUILang()), () =>
+    this.store.get().uiLang,
+  );
 
   constructor() {
     applyTheme(this.theme);
@@ -245,6 +261,7 @@ class App {
     this.timeline.render([], 0);
     void this.loadProviders();
     void this.loadActiveModel();
+    void this.loadTerminalCapabilities();
 
     const redraw = () => {
       this.levelStrip.render();
@@ -269,18 +286,26 @@ class App {
       this.store.set({ asrLang: this.refs.asrLang.value as ASRLang });
     });
 
-    this.refs.uiLang.addEventListener("change", () => {
-      const uiLang = this.refs.uiLang.value as UILang;
-      document.documentElement.lang = uiLang;
-      this.settings.setStrings(strings(uiLang));
-      this.shortcuts.setStrings(strings(uiLang));
-      this.store.set({ uiLang });
+    this.refs.uiLang.addEventListener("click", (event) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-lang]");
+      if (target) this.setLanguage(target.dataset.lang as UILang);
     });
 
-    this.refs.themeBtn.addEventListener("click", () => {
-      const order: Theme[] = ["system", "light", "dark"];
-      this.applyThemeChoice(order[(order.indexOf(this.theme) + 1) % order.length]);
+    // Left/right on the toggle, which is what a radiogroup promises and what
+    // anyone navigating by keyboard will try.
+    this.refs.uiLang.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      this.setLanguage(this.store.get().uiLang === "ja" ? "en" : "ja");
+      this.refs.uiLang.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
     });
+
+    this.refs.termMode.addEventListener("click", (event) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-mode]");
+      if (target) this.setTerminalMode(target.dataset.mode as "pty" | "plain");
+    });
+
+    this.refs.themeBtn.addEventListener("click", () => this.cycleTheme());
 
     this.refs.rail.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
@@ -344,7 +369,23 @@ class App {
       // it Escape and a focus trap, and a global handler firing behind it
       // would act on a surface the user cannot see.
       if (document.querySelector("dialog[open]")) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Checked before the typing guard and before the modifier guard: a
+      // palette people can only reach with the caret outside a text field is
+      // one they stop reaching for.
+      if (event.key === "k" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        this.palette.show();
+        return;
+      }
+
+      // Ctrl+1..4 jump between workspaces, the convention every tabbed
+      // application already taught people.
+      if ((event.ctrlKey || event.metaKey) && /^[1-4]$/.test(event.key)) {
+        event.preventDefault();
+        this.show(WORKSPACES[Number(event.key) - 1]);
+        return;
+      }
 
       const typing = isTyping();
       const inControl =
@@ -365,11 +406,14 @@ class App {
         return;
       }
 
-      if (typing) return;
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
 
       if (event.key === "/") {
         event.preventDefault();
         this.openSearch();
+      } else if (event.key === "k" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        this.palette.show();
       } else if (event.key === ",") {
         event.preventDefault();
         void this.settings.open();
@@ -408,10 +452,7 @@ class App {
       getTheme: () => this.theme,
       setTheme: (theme) => this.applyThemeChoice(theme),
       getUiLang: () => this.store.get().uiLang,
-      setUiLang: (uiLang) => {
-        this.refs.uiLang.value = uiLang;
-        this.refs.uiLang.dispatchEvent(new Event("change"));
-      },
+      setUiLang: (uiLang) => this.setLanguage(uiLang),
       getAsrLang: () => this.store.get().asrLang,
       setAsrLang: (asrLang) => {
         this.refs.asrLang.value = asrLang;
@@ -443,6 +484,9 @@ class App {
     this.levelStrip.render();
     const state = this.store.get();
     this.timeline.render(state.utterances, Math.max(state.durationS, 1));
+    // xterm holds resolved colours rather than CSS variables, so it has to be
+    // told; everything else in the app repaints from the custom properties.
+    this.pty?.setTheme(theme !== "light");
   }
 
   /** Name why a capture failed, rather than blaming the microphone for all of it. */
@@ -483,12 +527,118 @@ class App {
       this.chat ??= new ChatPanel(el("view-chat"), s, this.notify);
       this.chat.focus();
     } else if (view === "terminal") {
-      this.terminal ??= new TerminalPanel(el("view-terminal"), s, this.notify);
-      this.terminal.focus();
+      this.openTerminal();
     } else if (view === "code") {
       this.code ??= new CodePanel(el("view-code"), s, this.notify);
       void this.code.activate();
     }
+  }
+
+  private setLanguage(uiLang: UILang): void {
+    if (uiLang !== "ja" && uiLang !== "en") return;
+    document.documentElement.lang = uiLang;
+    this.settings.setStrings(strings(uiLang));
+    this.shortcuts.setStrings(strings(uiLang));
+    this.store.set({ uiLang });
+  }
+
+  /**
+   * Show one of the two terminals.
+   *
+   * They are different products, not a fallback pair: the interactive one is
+   * a real pty behind an emulator and runs `vim`; the plain one is the
+   * stripped text a model sees. Someone debugging what the assistant saw
+   * wants the second, and it is worth being able to look at exactly that.
+   */
+  private openTerminal(): void {
+    const s = this.s;
+    const usePty = this.termMode === "pty" && this.ptyAvailable;
+
+    el("term-pty").hidden = !usePty;
+    el("term-plain").hidden = usePty;
+
+    for (const button of this.refs.termMode.querySelectorAll<HTMLElement>("[data-mode]")) {
+      const on = button.dataset.mode === this.termMode;
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-checked", String(on));
+    }
+
+    if (usePty) {
+      this.pty ??= new PtyPanel(el("term-pty"), s, this.notify);
+      // Built on first show, so opening the app does not load a 250 KB
+      // emulator for someone who came to record a meeting.
+      void this.pty.activate().then(() => this.pty?.refit());
+      this.pty.refit();
+    } else {
+      this.terminal ??= new TerminalPanel(el("term-plain"), s, this.notify);
+      this.terminal.focus();
+    }
+  }
+
+  private setTerminalMode(mode: "pty" | "plain"): void {
+    if (mode === "pty" && !this.ptyAvailable) {
+      this.notify.info(this.s.terminalNoPty);
+      return;
+    }
+    this.termMode = mode;
+    this.openTerminal();
+  }
+
+  /** Ask the server which terminals this machine can actually open. */
+  private async loadTerminalCapabilities(): Promise<void> {
+    try {
+      const response = await fetch("/v1/terminal/capabilities");
+      if (!response.ok) return;
+      const body = (await response.json()) as { pty: boolean };
+      this.ptyAvailable = Boolean(body.pty);
+      if (!this.ptyAvailable) {
+        // Guessing from the platform would be wrong on a Windows box with no
+        // pywinpty installed, which is the common case on a fresh machine.
+        this.termMode = "plain";
+        el<HTMLButtonElement>("term-mode-pty").disabled = true;
+        el("term-mode-pty").title = this.s.terminalNoPty;
+      }
+    } catch {
+      /* the panel falls back to plain, which always works */
+    }
+  }
+
+  /**
+   * Everything the palette can do.
+   *
+   * Rebuilt whenever the language changes rather than held: a command's label
+   * is part of it, and a stale list is a palette that answers in the language
+   * the app is no longer in.
+   */
+  private buildCommands(): void {
+    const go = (view: WorkspaceView) => () => this.show(view);
+    const commands: Command[] = [
+      { id: "meeting", ja: "議事録を開く", en: "Go to Meeting", group: "workspace", hint: "Ctrl+1", run: go("meeting") },
+      { id: "chat", ja: "チャットを開く", en: "Go to Chat", group: "workspace", hint: "Ctrl+2", run: go("chat") },
+      { id: "terminal", ja: "端末を開く", en: "Go to Terminal", group: "workspace", hint: "Ctrl+3", run: go("terminal") },
+      { id: "code", ja: "コードを開く", en: "Go to Code", group: "workspace", hint: "Ctrl+4", run: go("code") },
+
+      { id: "record", ja: "録音の開始・停止", en: "Start or stop recording", group: "meeting", hint: "Space", run: () => void this.toggle() },
+      { id: "demo", ja: "デモを再生", en: "Play the demo meeting", group: "meeting", run: () => void this.startDemo() },
+      { id: "minutes", ja: "議事録を作成", en: "Generate minutes", group: "meeting", run: () => this.requestMinutes() },
+      { id: "copy-transcript", ja: "文字起こしをコピー", en: "Copy the transcript", group: "meeting", run: () => void this.copyTranscript() },
+      { id: "copy-minutes", ja: "議事録をコピー", en: "Copy the minutes", group: "meeting", run: () => void this.copyMinutes() },
+      { id: "search", ja: "文字起こしを検索", en: "Search the transcript", group: "meeting", hint: "/", run: () => this.openSearch() },
+
+      { id: "settings", ja: "設定を開く", en: "Open settings", group: "app", hint: ",", run: () => void this.settings.open() },
+      { id: "plugins", ja: "プラグイン", en: "Plugins", group: "app", run: () => void this.settings.open("plugins") },
+      { id: "models", ja: "APIキー", en: "API keys", group: "app", run: () => void this.settings.open("models") },
+      { id: "audio", ja: "音声設定", en: "Audio settings", group: "app", run: () => void this.settings.open("audio") },
+      { id: "theme", ja: "テーマを切り替え", en: "Toggle theme", group: "app", run: () => this.cycleTheme() },
+      { id: "language", ja: "English に切り替え", en: "日本語に切り替え", group: "app", run: () => this.setLanguage(this.store.get().uiLang === "ja" ? "en" : "ja") },
+      { id: "shortcuts", ja: "ショートカット一覧", en: "Keyboard shortcuts", group: "app", hint: "?", run: () => this.shortcuts.open() },
+    ];
+    this.palette.register(commands);
+  }
+
+  private cycleTheme(): void {
+    const order: Theme[] = ["system", "light", "dark"];
+    this.applyThemeChoice(order[(order.indexOf(this.theme) + 1) % order.length]);
   }
 
   /* ---------------------------------------------------------------- session */
@@ -864,7 +1014,6 @@ class App {
     this.refs.speechChip.className = `chip${state.speaking ? " live" : ""}`;
     this.refs.backend.textContent = state.provider || "—";
 
-    this.refs.uiLang.value = state.uiLang;
     this.refs.asrLang.value = state.asrLang;
     this.refs.themeBtn.title = s.theme;
     this.refs.themeBtn.setAttribute("aria-label", s.theme);
@@ -892,7 +1041,9 @@ class App {
     el("tab-minutes").textContent = s.minutes;
     el("tab-routing").textContent = s.routing;
     el("tab-metrics").textContent = s.metrics;
-    el("t-ui-lang").textContent = s.uiLanguage;
+    // The language toggle carries its own bilingual aria-label, so it needs
+    // no separate visually-hidden caption the way the old select did.
+    this.refs.uiLang.setAttribute("aria-label", `${s.language} / Language`);
     el("t-asr-lang").textContent = s.asrLanguage;
     el("t-tagline").textContent = s.tagline;
     el("t-hint").replaceChildren(h("kbd", { text: "Space" }), ` ${s.toggleRecord}`);
@@ -907,9 +1058,25 @@ class App {
       const label = el(`rail-${name}`).querySelector(".rail-label");
       if (label) label.textContent = railLabels[name];
     }
+    this.palette.setStrings(s);
+    this.buildCommands();
     this.chat?.setStrings(s);
     this.terminal?.setStrings(s);
+    this.pty?.setStrings(s);
     this.code?.setStrings(s);
+
+    for (const button of this.refs.uiLang.querySelectorAll<HTMLElement>("[data-lang]")) {
+      const on = button.dataset.lang === this.store.get().uiLang;
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-checked", String(on));
+      // Roving tabindex: one stop for the pair, arrows move within it.
+      (button as HTMLButtonElement).tabIndex = on ? 0 : -1;
+    }
+    el("term-mode-pty").textContent = s.terminalInteractive;
+    el("term-mode-plain").textContent = s.terminalPlain;
+    this.refs.termModeHint.textContent = this.ptyAvailable
+      ? s.terminalModeHint
+      : s.terminalNoPty;
 
     const auto = this.refs.asrLang.querySelector('option[value="unknown"]');
     if (auto) auto.textContent = s.auto;

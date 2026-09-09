@@ -20,6 +20,7 @@
 #     the user, which is what `--onefile` was really being used to achieve.
 
 import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
@@ -62,6 +63,18 @@ webview_datas, webview_binaries, webview_hidden = collect_all("webview")
 datas += webview_datas
 binaries += webview_binaries
 hiddenimports += webview_hidden
+
+# pywinpty is the ConPTY binding behind the interactive terminal: a compiled
+# extension plus the agent binaries it shells out to, none of which the
+# analyser finds from an import alone.
+if sys.platform == "win32":
+    try:
+        winpty_datas, winpty_binaries, winpty_hidden = collect_all("winpty")
+        datas += winpty_datas
+        binaries += winpty_binaries
+        hiddenimports += winpty_hidden
+    except Exception:  # noqa: BLE001 - an optional dependency that may be absent
+        print("! pywinpty not found; the interactive terminal will be unavailable")
 
 # pydantic v2 has compiled internals that the analyser under-reports.
 hiddenimports += collect_submodules("pydantic")

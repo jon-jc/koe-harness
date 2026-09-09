@@ -28,12 +28,14 @@ def _require(args: dict[str, Any], key: str) -> str:
 
 
 def workspace_tools(ctx: Any, config: Any = None) -> None:
-    """Read-only file access: list, read, glob, grep.
+    """File access: list, read, glob, grep — and, separately, write and edit.
 
-    Read-only is deliberate for the first cut. A write tool needs the
-    read-before-edit policy and an approval path to be safe, and shipping the
-    mutation half before the guard is how a harness earns a bad reputation in
-    one release.
+    The read tools and the write tools are two plugins rather than one so a
+    deployment can mount the half it wants. `workspace_write_tools` is where
+    the mutation lives, and it is written on the assumption that
+    `read_before_edit` is mounted beside it — see that module for why the
+    guard is a policy the tools know nothing about rather than a check each
+    one performs.
     """
     registry = ctx.get("tools")
     workspace: Workspace = ctx.get("workspace")
@@ -177,6 +179,111 @@ def workspace_tools(ctx: Any, config: Any = None) -> None:
     for spec in specs:
         # The disposer goes on the scope, so unloading this plugin removes
         # every tool it added and leaves none pointing at dead code.
+        ctx.scope.collect(f"tool:{spec.name}", registry.register(spec))
+
+
+def workspace_write_tools(ctx: Any, config: Any = None) -> None:
+    """Mutation: write and edit.
+
+    A separate plugin from the read tools, because a deployment that wants a
+    model reading its repository does not necessarily want one changing it,
+    and the two should be separable without editing code.
+
+    Neither tool checks whether the file was read first. That is deliberate
+    and is the whole architecture: the guard is `read_before_edit`, a policy
+    listening on `tools/pre-execute`, so removing it degrades to unguarded
+    mutation rather than breaking the tools — and adding a second policy
+    (approval, an audit log, a path allowlist) needs no change here either.
+    """
+    registry = ctx.get("tools")
+    workspace: Workspace = ctx.get("workspace")
+    if registry is None or workspace is None:
+        return
+
+    async def write_file(args: dict[str, Any], run: ToolRun) -> Any:
+        path = _require(args, "path")
+        content = args.get("content")
+        if not isinstance(content, str):
+            raise ToolInvocationError("'content' is required and must be a string")
+
+        # The version the caller last saw, so a concurrent editor is caught by
+        # the provider's own check rather than by a re-read that races.
+        log = ctx.get("observations")
+        seen = log.get(run.owner, path) if log else None
+        try:
+            view = workspace.write(path, content, expect=seen.version if seen else None)
+        except WorkspaceError as exc:
+            raise ToolInvocationError(str(exc)) from exc
+        return f"wrote {view.path} ({view.total_lines:,} lines, {view.size:,} bytes)"
+
+    async def edit_file(args: dict[str, Any], run: ToolRun) -> Any:
+        path = _require(args, "path")
+        old = args.get("old_text")
+        new = args.get("new_text")
+        if not isinstance(old, str) or not old:
+            raise ToolInvocationError("'old_text' is required and must be non-empty")
+        if not isinstance(new, str):
+            raise ToolInvocationError("'new_text' is required and must be a string")
+
+        log = ctx.get("observations")
+        seen = log.get(run.owner, path) if log else None
+        try:
+            view, _ = workspace.edit(path, old, new, expect=seen.version if seen else None)
+        except WorkspaceError as exc:
+            raise ToolInvocationError(str(exc)) from exc
+        return f"edited {view.path} ({view.total_lines:,} lines)"
+
+    specs = [
+        ToolSpec(
+            name="write_file",
+            description=(
+                "Write a file, replacing its entire contents. Read the file "
+                "first: overwriting a file you have not read is refused, "
+                "because you would be replacing your idea of it rather than "
+                "the file. Creating a new file needs no read. Prefer edit_file "
+                "for a change to part of an existing file — a whole-file "
+                "rewrite loses anything you did not know was there."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative file path."},
+                    "content": {"type": "string", "description": "The complete new contents."},
+                },
+                "required": ["path", "content"],
+            },
+            execute=write_file,
+            dangerous=True,
+            source="workspace-write",
+        ),
+        ToolSpec(
+            name="edit_file",
+            description=(
+                "Replace one exact piece of text in a file. Read the file "
+                "first. `old_text` must appear exactly once — include enough "
+                "surrounding lines to make it unique, or the edit is refused "
+                "rather than applied to the first match. Whitespace and "
+                "indentation must match exactly."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative file path."},
+                    "old_text": {
+                        "type": "string",
+                        "description": "The exact text to replace. Must be unique in the file.",
+                    },
+                    "new_text": {"type": "string", "description": "What to replace it with."},
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+            execute=edit_file,
+            dangerous=True,
+            source="workspace-write",
+        ),
+    ]
+
+    for spec in specs:
         ctx.scope.collect(f"tool:{spec.name}", registry.register(spec))
 
 

@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from koe.terminal.session import (
+    PtyBackend,
     ShellBackend,
     TerminalFailure,
     TerminalService,
@@ -50,6 +51,10 @@ def terminal_plugin(ctx: Any, config: Any = None) -> None:
 
     service = TerminalService(cwd=workspace.root if workspace else None)
     service.register_backend(ShellBackend())
+    # Registered unconditionally: `open` reports a missing pty as a spawn
+    # failure naming the remedy, which is more useful than a backend that
+    # silently is not there.
+    service.register_backend(PtyBackend())
     ctx.provide("terminals", service, replace=True)
 
     # Unloading this plugin must not leave orphaned shells behind: a leaked

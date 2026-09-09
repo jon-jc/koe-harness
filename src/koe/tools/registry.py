@@ -232,11 +232,24 @@ class ToolRegistry:
         if spec is None:
             # Naming the alternatives matters: the usual cause is a model
             # inventing a plausible tool, and a list is what corrects it.
+            # No post-execute here: there is no tool to hand a listener.
             known = ", ".join(sorted(self._tools)) or "none"
             return self._fail(run, ToolError.NO_TOOL, f"no tool named {name!r} (have: {known})")
 
         started = time.perf_counter()
+        result = await self._dispatch(spec, run, args, started)
 
+        # Fired for *every* outcome, not just success. A listener that only
+        # sees the calls that worked cannot audit, cannot rate-limit, and —
+        # the case that caught this — cannot record that a read failed because
+        # the file was not there, which is what authorizes creating it.
+        await self._post_execute(spec, run, result)
+        return result
+
+    async def _dispatch(
+        self, spec: ToolSpec, run: ToolRun, args: dict[str, Any], started: float
+    ) -> ToolResult:
+        """One call, from policy through body to a normalized outcome."""
         denial = await self._pre_execute(spec, run)
         if denial is not None:
             return self._fail(run, denial.code, denial.reason, started)
@@ -244,7 +257,9 @@ class ToolRegistry:
         try:
             value = await self._execute(spec, run, args)
         except TimeoutError:
-            return self._fail(run, ToolError.TIMEOUT, f"{name} exceeded {spec.timeout_s}s", started)
+            return self._fail(
+                run, ToolError.TIMEOUT, f"{spec.name} exceeded {spec.timeout_s}s", started
+            )
         except asyncio.CancelledError:
             return self._fail(run, ToolError.CANCELLED, "cancelled", started)
         except ToolInvocationError as exc:
@@ -252,12 +267,12 @@ class ToolRegistry:
             # worth distinguishing from a crash, because the model can fix it.
             return self._fail(run, exc.code, str(exc), started)
         except Exception as exc:
-            logger.exception("tool %s failed", name)
+            logger.exception("tool %s failed", spec.name)
             return self._fail(run, ToolError.FAILED, f"{type(exc).__name__}: {exc}", started)
 
         content, truncated = _render(value)
-        result = ToolResult(
-            tool=name,
+        return ToolResult(
+            tool=spec.name,
             call_id=run.call_id,
             ok=True,
             content=content,
@@ -265,8 +280,6 @@ class ToolRegistry:
             duration_ms=(time.perf_counter() - started) * 1000.0,
             truncated=truncated,
         )
-        await self._post_execute(spec, run, result)
-        return result
 
     async def _pre_execute(self, spec: ToolSpec, run: ToolRun) -> Denial | None:
         """Ask the policy layer whether this call may proceed."""

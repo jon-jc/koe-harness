@@ -115,7 +115,13 @@ interface Health {
   japanese_tokenizer: string;
 }
 
-type Section = "audio" | "recognition" | "models" | "plugins" | "appearance" | "about";
+export type Section =
+  | "audio"
+  | "recognition"
+  | "models"
+  | "plugins"
+  | "appearance"
+  | "about";
 
 const SECTIONS: readonly Section[] = [
   "audio",
@@ -214,7 +220,10 @@ export class SettingsDialog {
     this.dialog.append(head, h("div", { class: "modal-split" }, this.nav, this.body), foot);
   }
 
-  async open(): Promise<void> {
+  async open(section?: Section): Promise<void> {
+    // Opening straight to a section is what makes "API keys" a command rather
+    // than an instruction to open settings and then find the third tab.
+    if (section && SECTIONS.includes(section)) this.section = section;
     this.dialog.showModal();
     this.render();
     // Fetched in parallel and rendered as they land, so the panel is usable
@@ -1118,6 +1127,8 @@ export class ShortcutsDialog {
     const s = this.strings;
     const grid = h("div", { class: "keys" });
     const rows: Array<[string, string]> = [
+      ["Ctrl+K", s.paletteSearch],
+      ["Ctrl+1…4", s.shortcutWorkspace],
       ["Space", s.toggleRecord],
       ["/", s.shortcutSearch],
       [",", s.shortcutSettings],
