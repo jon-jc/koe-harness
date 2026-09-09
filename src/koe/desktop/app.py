@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from koe.desktop import paths
+from koe.desktop.console import ensure_console
 from koe.desktop.instance import AlreadyRunning, InstanceLock
 from koe.desktop.server import EmbeddedServer
 from koe.desktop.settings import DesktopSettings, WindowState
@@ -368,6 +369,12 @@ def main(argv: list[str] | None = None) -> int:
     if problem:
         show_error("koe — cannot start", problem)
         return 1
+
+    # Before the server, because the terminal plugin probes for a pty while
+    # mounting and a GUI-subsystem process has no console for ConPTY to use.
+    # Failure is not fatal: the pty backend reports itself unavailable and the
+    # terminal panel uses pipes.
+    ensure_console()
 
     prepare_webview_environment()
 
