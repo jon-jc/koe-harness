@@ -48,7 +48,7 @@ export const DEFAULTS: Prefs = {
   autoGainControl: true,
   partialIntervalMs: 400,
   silenceToEndMs: 900,
-  speechThresholdDb: 9,
+  speechThresholdDb: 6,
   useEndpointDefaults: true,
 };
 

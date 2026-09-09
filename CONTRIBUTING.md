@@ -52,9 +52,19 @@ way, and ideally what breaks otherwise.
 self._noise_floor_db = (1 - alpha) * self._noise_floor_db + alpha * energy_db
 
 # Good — says why, and what fails without it
-# Adapt only on non-speech, or the floor climbs to meet the speaker and the
-# detector goes deaf partway through a sentence.
+# Downward is always safe: a frame quieter than the floor cannot be speech,
+# because speech is what sits above the room. Upward only between utterances,
+# or a speech frame that lands just under the bar lifts the bar that produced
+# it, and the detector talks itself deaf mid-sentence.
 ```
+
+This example used to read "adapt only on non-speech, or the floor climbs to
+meet the speaker" — which sounds like a reason and is not one, because
+"non-speech" was decided by the very threshold that was failing. It described a
+feedback loop as if it were the fix for one, and it survived review here for
+several releases. A comment that explains *why* is still only as good as the
+why. Prefer ones you can falsify: the version above names a claim about the
+signal ("speech sits above the room") that a test can be pointed at.
 
 ### Tests assert behaviour with a stated reason
 

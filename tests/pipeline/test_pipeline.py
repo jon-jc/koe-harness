@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import array
 import math
+import random
 
 import pytest
 
@@ -11,7 +12,7 @@ from koe.domain.audio import STANDARD_FORMAT
 from koe.kernel.context import Context
 from koe.pipeline.session import PartialEvent, SessionConfig, StreamingSession
 from koe.pipeline.stabilizer import Stabilizer, common_prefix
-from koe.pipeline.vad import VAD, SpeechState, VADConfig, frame_energy_db
+from koe.pipeline.vad import MIN_RELEASE_DB, VAD, SpeechState, VADConfig, frame_energy_db
 from koe.providers.mock import MEETING_JA, MockASR
 from koe.text.script import Language
 
@@ -33,6 +34,49 @@ def quiet(ms: float, amplitude: int = 20) -> bytes:
     count = int(SAMPLE_RATE * ms / 1000.0)
     samples = array.array("h", ((amplitude if i % 7 == 0 else -amplitude) for i in range(count)))
     return samples.tobytes()
+
+
+def _pcm(values: list[float], level_dbfs: float) -> bytes:
+    """Scale a float waveform so its RMS lands on `level_dbfs`, as PCM16.
+
+    Normalizing by measured RMS rather than by peak is what makes the dB in
+    these tests mean the same thing the detector measures. Scaling by peak
+    instead leaves a waveform-shaped offset between the number in the test and
+    the number in the threshold comparison, which is how a test ends up
+    asserting a signal-to-noise ratio it is not actually producing.
+    """
+    rms = math.sqrt(sum(value * value for value in values) / len(values))
+    if rms <= 0:
+        return array.array("h", [0] * len(values)).tobytes()
+    gain = (10 ** (level_dbfs / 20.0)) * 32768.0 / rms
+    return array.array(
+        "h", (max(-32768, min(32767, int(value * gain))) for value in values)
+    ).tobytes()
+
+
+def voice(ms: float, level_dbfs: float) -> bytes:
+    """Speech-like audio at `level_dbfs`.
+
+    A pure tone is too easy: its energy is perfectly flat, so a detector that
+    falls apart on the envelope of real speech passes anyway. This carries the
+    syllable-rate amplitude modulation that is what actually breaks
+    single-threshold detectors.
+    """
+    count = int(SAMPLE_RATE * ms / 1000.0)
+    values = []
+    phase = 0.0
+    for index in range(count):
+        phase += 2 * math.pi * 150.0 / SAMPLE_RATE
+        value = (math.sin(phase) + 0.5 * math.sin(2 * phase)) / 1.5
+        values.append(value * (0.7 + 0.3 * math.sin(index / 800.0)))
+    return _pcm(values, level_dbfs)
+
+
+def room(ms: float, level_dbfs: float, *, seed: int = 5) -> bytes:
+    """Room tone at `level_dbfs` -- broadband noise, not a repeating pattern."""
+    rng = random.Random(seed)
+    count = int(SAMPLE_RATE * ms / 1000.0)
+    return _pcm([rng.uniform(-1.0, 1.0) for _ in range(count)], level_dbfs)
 
 
 # --------------------------------------------------------------------------
@@ -143,6 +187,126 @@ def test_japanese_gets_a_longer_endpoint_window() -> None:
     ja = VADConfig.for_language(Language.JA)
     en = VADConfig.for_language(Language.EN)
     assert ja.silence_to_end_ms > en.silence_to_end_ms
+
+
+# --------------------------------------------------------------------------
+# VAD: the conditions it shipped broken in
+#
+# Every test above uses a tone 49 dB over its room tone, which is a studio and
+# not a customer. These four are the ones that were reported as "the voice
+# detection is not working", reproduced at the signal-to-noise ratios real
+# hardware actually delivers.
+# --------------------------------------------------------------------------
+
+
+def test_speech_survives_a_room_only_13_db_below_it() -> None:
+    """A laptop microphone with a fan running.
+
+    Speech 13 dB over the floor dips between syllables. A single threshold
+    reads each dip as silence *and* adapts the floor toward the speaker while
+    it does, so the bar rises with every dip until nothing clears it. Measured,
+    this returned a two-second utterance 0.76 s long.
+    """
+    vad = VAD(config=VADConfig(silence_to_end_ms=900.0))
+    vad.push(room(1_000, -47.0))
+    vad.push(voice(2_000, -34.0))
+    segments = vad.push(room(1_600, -47.0))
+
+    assert len(segments) == 1
+    assert segments[0].duration == pytest.approx(2.0, abs=0.25)
+
+
+def test_a_speaker_only_7_db_over_the_room_is_still_heard() -> None:
+    """The far side of a meeting table. At the old 9 dB bar: no segments."""
+    vad = VAD(config=VADConfig(silence_to_end_ms=700.0))
+    vad.push(room(1_000, -60.0))
+    vad.push(voice(2_000, -53.0))
+    segments = vad.push(room(1_400, -60.0))
+
+    assert len(segments) == 1
+    assert segments[0].duration == pytest.approx(2.0, abs=0.3)
+
+
+def test_the_floor_never_rises_while_an_utterance_is_open() -> None:
+    """The feedback loop, asserted directly rather than through its symptom."""
+    vad = VAD(config=VADConfig(silence_to_end_ms=5_000.0))
+    vad.push(room(400, -50.0))
+    vad.push(voice(200, -34.0))
+    assert vad.state is SpeechState.SPEECH
+
+    at_onset = vad.noise_floor_db
+    vad.push(voice(1_800, -34.0))
+
+    assert vad.state is SpeechState.SPEECH
+    assert vad.noise_floor_db <= at_onset
+
+
+def test_a_leading_frame_of_digital_silence_does_not_deafen_the_detector() -> None:
+    """The one that was reported as "the voice detection is not working".
+
+    Captures routinely open with a frame or two of exact zeroes before audio
+    starts flowing. Seeding the floor from the first frame put it at the clamp
+    -- about 10 dB *below* the actual room -- so room tone itself cleared the
+    bar. The detector latched into speech on the first frame and never left, no
+    utterance ever ended, and nothing was transcribed. The level meter moved
+    the whole time, which is what made it look like a transcription bug.
+    """
+    vad = VAD(config=VADConfig(silence_to_end_ms=700.0))
+    vad.push(bytes(640))  # one 20 ms frame of exact zeroes
+    vad.push(room(1_000, -65.0))
+    assert vad.state is SpeechState.SILENCE
+
+    vad.push(voice(1_500, -54.0))
+    assert vad.state is SpeechState.SPEECH
+
+    segments = vad.push(room(1_200, -65.0))
+    assert len(segments) == 1
+
+
+def test_a_capture_that_opens_mid_word_recovers_at_the_first_pause() -> None:
+    """A floor sitting too high is deaf, and every frame it spends coming back
+    down is a frame of speech nobody hears. So it comes down fast."""
+    vad = VAD(config=VADConfig(silence_to_end_ms=700.0))
+    vad.push(voice(400, -30.0))  # the stream opens mid-utterance
+    vad.push(room(800, -60.0))  # the speaker pauses
+    vad.push(voice(1_500, -45.0))  # and carries on, quieter than before
+    segments = vad.push(room(1_200, -60.0))
+
+    assert len(segments) >= 1
+    assert segments[-1].duration == pytest.approx(1.5, abs=0.4)
+
+
+def test_nothing_is_called_speech_before_the_room_is_known() -> None:
+    """Committing to a speech call on an unknown floor risks committing to the
+    wrong one for the whole session; losing 300 ms is the cheaper trade."""
+    vad = VAD()
+    assert vad.calibrating
+
+    vad.push(room(100, -60.0))
+    assert vad.calibrating
+    assert vad.state is SpeechState.SILENCE
+
+    vad.push(room(400, -60.0))
+    assert not vad.calibrating
+
+
+def test_the_floor_stops_before_digital_silence() -> None:
+    """Browser noise suppression emits true zeroes between words. A floor that
+    follows them to -100 dB puts the onset bar down among the dither."""
+    vad = VAD()
+    vad.push(bytes(2 * SAMPLE_RATE))  # one second of exact silence
+
+    assert vad.noise_floor_db == pytest.approx(VADConfig().min_noise_floor_db)
+    assert vad.state is SpeechState.SILENCE
+
+
+def test_the_continuation_bar_stays_under_the_onset_bar() -> None:
+    """Relative, so that raising the onset bar -- what someone in a loud room
+    does -- keeps the hysteresis band the same width instead of turning the
+    detector into something that latches on and never lets go."""
+    for onset in (3.0, 6.0, 12.0, 24.0):
+        config = VADConfig(speech_threshold_db=onset)
+        assert MIN_RELEASE_DB <= config.release_threshold_db < onset
 
 
 # --------------------------------------------------------------------------
