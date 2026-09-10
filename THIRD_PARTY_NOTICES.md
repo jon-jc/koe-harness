@@ -109,15 +109,64 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### DeepSeek Harness
+
+<https://github.com/deepseek-ai/deepseek-harness> — MIT License, Copyright (c)
+2026 DeepSeek.
+
+`src/koe/harness/` is a port of the parts of dsh that make a chat surface a
+harness. dsh is a TypeScript monorepo built on Cordis and koe's backend is
+Python, so no file is copied: the architecture, the event taxonomy and the
+scheduling algorithm are dsh's, reimplemented against koe's kernel, tool
+registry and providers.
+
+| koe | from | what was taken |
+|---|---|---|
+| `harness/session.py` | `packages/core/session` | The append-only session log, the `turn/*` `step/*` `tool/*` event taxonomy, and deriving message history by folding the log rather than storing it |
+| `harness/inbox.py` | `agent-loop/src/inbox.ts` | Two pending queues, mutation as durable splices, and atomic claiming at turn and step boundaries — the mechanism behind steering |
+| `harness/scheduler.py` | `agent-loop/src/tool-calls.ts` | Exclusive barriers, the bounded parallel pool, reclassification as the pool fills, model-ordered commit of out-of-order completions, and synthetic `aborted before dispatch` results |
+| `harness/agent.py` | `agent-loop/src/agent.ts` | The turn/step machine, the queue-consuming driver, explicit cooperative cancellation, and committing streamed text as interrupted |
+
+The event names are dsh's spelling on purpose. Inventing koe's own would have
+made the two implementations impossible to compare, which is the main thing a
+reader of both would want to do.
+
+**Not ported**, and absent rather than stubbed: compaction, the projection
+registry, persistence backends, delegation and sub-agents, ACP, and dsh's
+request-freeze provenance. koe's chat is one agent in one process.
+
+```
+MIT License
+
+Copyright (c) 2026 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Prior art and design influence
 
-Not dependencies — no code is copied from either — but the design owes them a
-citation:
+Not dependencies and not adapted source — but the design owes them a citation:
 
-- **[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)** (MIT)
-  and **[Cordis](https://github.com/cordiverse/cordis)** (MIT) — the plugin
+- **[Cordis](https://github.com/cordiverse/cordis)** (MIT) — the plugin
   kernel's composability model: scoped lifetimes, dependency-gated activation,
-  and spatial filters. Reimplemented in Python for a realtime audio domain.
+  and spatial filters. Reimplemented in Python for a realtime audio domain,
+  by way of dsh above.
 - **LocalAgreement** — the partial-stabilization policy, as described by
   Macháček, Dabre and Bojar in *Turning Whisper into Real-Time Transcription
   System* (2023) and used in `whisper_streaming`.

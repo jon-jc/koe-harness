@@ -2267,3 +2267,29 @@ mark.find {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* A steering message: it joined a turn already in progress, so it sits after
+   work the model had already done. Marked rather than styled as a prompt,
+   because a reader needs to see that the correction arrived late. */
+.msg.steer {
+  align-self: flex-end;
+  max-width: 82%;
+  border-inline-start: 2px solid var(--accent);
+  padding-inline-start: calc(var(--step) * 2);
+  opacity: 0.92;
+}
+
+.msg-tag {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-block-end: calc(var(--step) * 0.5);
+}
+
+/* Stop sits beside Send rather than replacing it: while a turn runs both are
+   live, because stopping and steering are different intentions. */
+.chat-stop {
+  flex: 0 0 auto;
+}

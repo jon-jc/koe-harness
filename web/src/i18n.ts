@@ -125,6 +125,13 @@ export interface Strings {
   readonly wsCode: string;
   readonly chatPlaceholder: string;
   readonly chatSend: string;
+  readonly chatSteer: string;
+  readonly chatSteerPlaceholder: string;
+  readonly chatStop: string;
+  readonly chatStopping: string;
+  readonly chatStopped: string;
+  readonly chatSteered: string;
+  readonly chatStep: string;
   readonly chatEmpty: string;
   readonly chatThinking: string;
   readonly chatRunning: string;
@@ -380,6 +387,13 @@ const JA: Strings = {
   wsCode: "コード",
   chatPlaceholder: "この会議やコードについて質問してください",
   chatSend: "送信",
+  chatSteer: "軌道修正",
+  chatSteerPlaceholder: "作業中のまま指示を追加できます",
+  chatStop: "停止",
+  chatStopping: "停止しています…",
+  chatStopped: "このターンを停止しました。キューは保持されています。",
+  chatSteered: "次のステップで反映します",
+  chatStep: "ステップ",
   chatEmpty: "文字起こし・議事録・ワークスペースのファイルを読めるアシスタントです。ツールを実際に呼び出し、その過程も表示します。",
   chatThinking: "考えています…",
   chatRunning: "実行中",
@@ -626,6 +640,13 @@ const EN: Strings = {
   wsCode: "Code",
   chatPlaceholder: "Ask about this meeting, or about the code",
   chatSend: "Send",
+  chatSteer: "Steer",
+  chatSteerPlaceholder: "Add a correction — it lands at the next step",
+  chatStop: "Stop",
+  chatStopping: "Stopping...",
+  chatStopped: "Turn stopped. Anything queued is kept.",
+  chatSteered: "Steering — lands at the next step",
+  chatStep: "step",
   chatEmpty: "An assistant that can read the transcript, the 議事録, and this workspace's files. It calls tools for real, and shows you the calls.",
   chatThinking: "Working…",
   chatRunning: "running",

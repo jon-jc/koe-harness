@@ -9,7 +9,7 @@ English · [日本語](README.ja.md)
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![814 tests](https://img.shields.io/badge/tests-814-brightgreen)
+![838 tests](https://img.shields.io/badge/tests-838-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -63,6 +63,46 @@ dropped 1 unsupported claim(s):
 
 That last line is the point of the whole LLM layer. See
 [Hallucination detection](#hallucination-detection-that-is-a-string-operation).
+
+### The chat is a harness
+
+Not a chat box with tools bolted on. `src/koe/harness/` is a port of the parts
+of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (MIT)
+that make the difference, reimplemented in Python against koe's kernel — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for exactly what was taken.
+
+**A conversation is an append-only log, and the message history is derived from
+it.** Not a mutated list. That one change is what makes the rest possible: the
+pending queue is a fold over the same log, cancellation has somewhere to record
+the prefix the user actually saw, and *what did the model see on step 3* has an
+answer.
+
+**You can steer a turn instead of cancelling it.** A model three tool calls into
+the wrong file does not need to be stopped and re-prompted — it needs telling,
+while it works, that it is looking in the wrong place. Type while it is running
+and **Send** becomes **Steer**: the correction lands at the next step boundary
+and the turn keeps the work it has already done.
+
+**Tool calls run in parallel where the tool says that is safe.** A read is
+parallel-safe; a shell command is not, and is a barrier. Dispatch overlaps but
+results commit in *model order* — a read that finishes first still lands after
+the calls the model listed before it, so the derived history does not depend on
+disk timing and a provider's prefix cache stays usable.
+
+**Cancelling leaves a well-formed history.** Streamed text is committed as
+interrupted, because the next request has to contain what the user actually saw.
+Calls that never dispatched get a synthetic `aborted before dispatch` result,
+because an assistant turn containing a call with no result is a request vendors
+reject — the next turn would fail on the history rather than on the
+cancellation.
+
+```
+turn/start → step/start → assistant/message → tool/call ×3 → tool/result ×3
+           → step/end   → step/start → assistant/message → step/end → turn/end
+```
+
+Every one of those is an event in the log, and the panel renders them as
+structure rather than prose.
 
 ### Telling a sentence from a door
 
@@ -505,6 +545,7 @@ src/koe/
   routing/       Budgets, circuit breakers, fallback chains
   evaluation/    CER/WER/DER, VAD scoring, bootstrap CIs, gates, corpus
   pipeline/      VAD, acoustic features, endpointing, stabilization, sessions
+  harness/       Session log, inbox, tool scheduling, turn/step machine
   minutes/       議事録 schema, prompts, guardrails, generator
   telemetry/     Cost ledger, metrics, structured logging
   api/           FastAPI + WebSocket
@@ -517,7 +558,7 @@ deploy/          Dockerfile, compose, Terraform (ECS Fargate)
 
 ## Testing and CI
 
-814 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
+838 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
 
 CI runs eight jobs on every push:
 
