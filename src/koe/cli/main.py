@@ -253,11 +253,12 @@ def demo(seed: Annotated[int, typer.Option()] = 0) -> None:
     compare(baseline=0.0, candidate=0.12, dataset=None, seed=seed)
 
 
-from koe.cli import bench_cmd, minutes_cmd, serve_cmd  # noqa: E402
+from koe.cli import bench_cmd, minutes_cmd, serve_cmd, vad_cmd  # noqa: E402
 
 minutes_cmd.register(app, console)
 serve_cmd.register(app, console)
 bench_cmd.register(app, console)
+vad_cmd.register(app, console)
 
 
 def main() -> None:

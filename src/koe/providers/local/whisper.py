@@ -290,6 +290,22 @@ class LocalWhisperASR:
             # already endpoints with its own VAD, so this is belt and braces
             # for the audio that does reach a decode.
             vad_filter=True,
+            # faster-whisper's own hallucination detector, which is off by
+            # default. It needs word timestamps, which koe asks for anyway, and
+            # uses them to notice text attributed to a stretch of silence.
+            hallucination_silence_threshold=2.0,
+            # Off, and this is the important one. Feeding a window's output
+            # back as the next window's context is what turns a single
+            # hallucination into a loop: the model reads its own invention as
+            # established fact and continues it. koe transcribes one utterance
+            # per call, so the context this discards is worth little, and the
+            # failure it prevents produces a paragraph of fluent nonsense.
+            condition_on_previous_text=False,
+            # A hard stop on the degenerate case, where the decoder falls into
+            # repeating a phrase for the length of the buffer. Five is longer
+            # than any phrase a person repeats verbatim and shorter than the
+            # loops this prevents.
+            no_repeat_ngram_size=5,
         )
 
         out: list[Segment] = []
