@@ -82,6 +82,44 @@ class Settings(BaseSettings):
     llm_model: str = "claude-opus-5"
     asr_model: str = "whisper-large-v3"
 
+    # -- local models ----------------------------------------------------
+    # Nothing here needs a key, which is the point: a machine with Ollama
+    # running and no credentials at all is a complete koe install.
+    #
+    #: Probe the well-known ports at startup. On by default, because finding
+    #: the Ollama someone already runs is the entire point -- and off in the
+    #: test suite, where what happens to be listening on the machine must not
+    #: decide what the tests exercise. An explicit `local_llm_base_url` is
+    #: honoured either way: this gates the sweep, not the feature.
+    discover_local_models: bool = True
+    #: Base URL of an OpenAI-compatible server on this machine. Empty means
+    #: "look for one" -- koe probes the well-known ports rather than asking
+    #: someone to know which port their GUI chose.
+    local_llm_base_url: str = ""
+    #: Which model to ask that server for. Empty means the first it offers,
+    #: which is the right guess when exactly one is loaded and a harmless one
+    #: when several are.
+    local_llm_model: str = ""
+    #: Some local servers sit behind a proxy that wants a bearer token.
+    local_llm_api_key: str = ""
+    #: Prefer a discovered local model over a configured cloud key. Off by
+    #: default: someone who has pasted an API key has expressed a preference,
+    #: and silently overriding it because a server happens to be listening
+    #: would be the harness making a policy decision on their behalf.
+    prefer_local_llm: bool = False
+
+    #: Run speech recognition on this machine. The setting that decides
+    #: whether audio leaves the device at all.
+    local_asr_enabled: bool = False
+    #: Whisper checkpoint. See koe.providers.local.whisper.SIZES -- the small
+    #: ones are not suitable for Japanese and koe says so rather than letting
+    #: it be discovered from a meeting transcript.
+    local_asr_model: str = "large-v3-turbo"
+    #: "auto", "cpu" or "cuda".
+    local_asr_device: str = "auto"
+    #: CTranslate2 quantization. "default" lets it choose for the device.
+    local_asr_compute_type: str = "default"
+
     # -- http ------------------------------------------------------------
     #: CORS origins. The wildcard default is fine for a local demo and is
     #: rejected in production by the validator below.

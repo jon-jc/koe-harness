@@ -9,7 +9,7 @@
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![413 tests](https://img.shields.io/badge/tests-413-brightgreen)
+![763 tests](https://img.shields.io/badge/tests-763-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -107,6 +107,51 @@ Windows では、**画面全体またはブラウザのタブ**を共有した�
 2つの値を調整できます。既定値の解除を必須にしているのは意図的です。無音判定の
 時間は日本語のほうが英語より長く設定されており、値を送信すればそれを上書きして
 しまうためです。送信された値はサーバー側で範囲内に丸められます。
+
+### ローカルモデルで完結させる
+
+API キーもアカウントも不要です。**設定 → ローカル**。
+
+**言語モデル。** Ollama・LM Studio・llama.cpp のサーバー・vLLM・Jan のいずれかを
+起動していれば、koe が自動的に見つけます。各プロジェクトが既定で使うポートを
+起動時に並行して調べるので、設定する項目はありません。どのモデルを持っているかは
+すでにこの PC が知っている情報だからです。
+
+```
+Ollama  ·  この端末内
+  qwen2.5:7b     7.6B · Q4_K_M
+  llama3.2:3b    3.2B · Q4_K_M
+```
+
+API キーが登録されている場合は、既定ではそちらが優先されます。キーを貼ったことは
+利用者の意思表示ですが、11434 番ポートで何かが待ち受けていることはそうではない
+からです。**ローカルを優先する** を有効にすると逆転します。キーを削除しなくても
+ローカルだけで運用したい場合のスイッチです。
+
+**音声認識。** ローカル認識を有効にすると、音声はこの端末から一切送信されません。
+機密性の高い会議に koe を向けられるのは、この一点によります。
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) をプロセス内で実行します。
+
+```bash
+pip install 'koe-harness[asr]'
+```
+
+モデルサイズの一覧は、単なる「速度と精度のスライダー」ではありません。koe もそう
+提示しません。Whisper の学習データは英語に大きく偏っており、小さいチェックポイントは
+限られた多言語能力を英語に近い言語へ振り分けます。その結果 `tiny` と `base` は、
+英語なら粗いが使える程度、日本語では使い物になりません。該当するサイズには
+**日本語には非推奨** と明示します。会議の文字起こしを見て初めて気づく、という事態を
+避けるためです。既定は `large-v3-turbo`。日本語で `large-v3` と1〜2ポイント差の精度を、
+3分の1の計算量で出せます。
+
+ローカルの backend は、ルーターを置き換えるのではなく **ルーターに加わります**。
+ローカル推論は無料だが遅く、クラウドの vendor は速いが従量課金です。どちらを使うべきかは
+まさにルーターが判断するために存在するトレードオフです。そのため各 provider は自分の
+不利な点を正直に申告します。費用ゼロで他に重みがなければ、あらゆる選択でローカルが
+勝ってしまい、koe は「無料」ではなく「壊れている」と感じられるからです。
+
+> Whisper 各サイズおよびローカル LLM の言語別エラー率は **実測値ではなく事前分布** です。
+> 評価ハーネスをその backend に対して実行するまで `ProviderInfo.measured` は `False` のままです。
 
 ### API キーの登録
 

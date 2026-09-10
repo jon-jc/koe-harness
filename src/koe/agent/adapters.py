@@ -24,6 +24,8 @@ from collections.abc import Sequence
 from typing import Any
 
 from koe.agent.loop import Adapter, ChatMessage, ModelReply, ToolCall, render_tool_results
+from koe.providers.base import ProviderError
+from koe.providers.local.http import LocalHTTPError, post_json
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +202,175 @@ class OpenAIAdapter(Adapter):
         )
 
 
+class LocalAdapter(Adapter):
+    """A model on this machine, over the OpenAI-compatible wire format.
+
+    The message rendering is OpenAI's, so it shares `_openai_messages`. What is
+    different is everything around the request.
+
+    **Tool support is optional and koe finds out by asking.** Hosted models all
+    do function calling; local ones range from full support to rejecting the
+    ``tools`` key outright, and the same server answers differently depending on
+    which model is loaded. A turn that fails because the model cannot call tools
+    is a bad outcome when the question was "summarize this meeting" and needed
+    none. So a refusal that names the tools field is retried once without it,
+    and the answer is that the assistant works with fewer capabilities rather
+    than not at all. The result is remembered for the session: re-learning it on
+    every turn would double the latency of a path that is already the slow one.
+
+    **Arguments may arrive parsed or as a string.** OpenAI sends a JSON string.
+    Several local servers send an object, having parsed it to validate against
+    the schema. Both are accepted, because rejecting the object form would make
+    tool calling fail on exactly the servers that tried hardest to get it right.
+    """
+
+    name = "local"
+
+    def __init__(self, provider: Any, *, max_tokens: int = 4096) -> None:
+        self._provider = provider
+        self._max_tokens = max_tokens
+        #: None until a turn has told us. Not a config flag: what matters is
+        #: what the loaded model does, which no setting can know.
+        self._tools_supported: bool | None = None
+
+    @property
+    def tools_supported(self) -> bool | None:
+        return self._tools_supported
+
+    async def reply(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        system: str,
+        tools: Sequence[dict[str, Any]],
+    ) -> ModelReply:
+        send_tools = bool(tools) and self._tools_supported is not False
+
+        def build(with_tools: bool) -> dict[str, Any]:
+            payload: dict[str, Any] = {
+                "model": self._provider.model,
+                "max_tokens": self._max_tokens,
+                "messages": [{"role": "system", "content": system}, *_openai_messages(messages)],
+                "stream": False,
+            }
+            if with_tools:
+                payload["tools"] = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool["description"],
+                            "parameters": tool["parameters"],
+                        },
+                    }
+                    for tool in tools
+                ]
+            return payload
+
+        try:
+            body = await post_json(
+                self._provider.endpoint,
+                build(send_tools),
+                timeout=self._provider.timeout_s,
+                api_key=self._provider.api_key,
+            )
+            if send_tools:
+                self._tools_supported = True
+        except LocalHTTPError as exc:
+            if not send_tools or not _rejected_tools(exc):
+                raise ProviderError(self._provider._explain(exc)) from exc
+            logger.info(
+                "%s does not accept tool definitions; continuing without them",
+                self._provider.model,
+            )
+            self._tools_supported = False
+            try:
+                body = await post_json(
+                    self._provider.endpoint,
+                    build(False),
+                    timeout=self._provider.timeout_s,
+                    api_key=self._provider.api_key,
+                )
+            except LocalHTTPError as retry_exc:
+                raise ProviderError(self._provider._explain(retry_exc)) from retry_exc
+
+        return _local_reply(body)
+
+
+def _rejected_tools(exc: Any) -> bool:
+    """Whether this failure looks like "I do not do tool calling".
+
+    Matched on the message because there is no status code for it: servers
+    variously answer 400, 404, 422 or 500, and the only thing they agree on is
+    mentioning the field. A false positive costs one retry without tools; a
+    false negative costs the turn.
+    """
+    if getattr(exc, "status", None) is None:
+        return False
+    text = str(exc).lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "tool",
+            "function call",
+            "functions",
+            "does not support",
+            "unsupported",
+        )
+    )
+
+
+def _local_reply(body: Any) -> ModelReply:
+    """One OpenAI-compatible response body as a ModelReply."""
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return ModelReply(text="")
+
+    first = choices[0]
+    choice: dict[str, Any] = first if isinstance(first, dict) else {}
+    raw_message = choice.get("message")
+    message: dict[str, Any] = raw_message if isinstance(raw_message, dict) else {}
+
+    calls: list[ToolCall] = []
+    for index, call in enumerate(message.get("tool_calls") or []):
+        if not isinstance(call, dict):
+            continue
+        raw_function = call.get("function")
+        function: dict[str, Any] = raw_function if isinstance(raw_function, dict) else {}
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        raw = function.get("arguments")
+        if isinstance(raw, dict):
+            # Already parsed, which several local servers do after validating
+            # against the schema.
+            arguments = raw
+        else:
+            try:
+                arguments = json.loads(raw or "{}")
+            except (TypeError, ValueError):
+                logger.warning("model produced invalid tool arguments for %s", name)
+                arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+        # Some servers omit the id, which the tool-result message must quote
+        # back. Synthesized rather than dropped, so the call still round-trips.
+        calls.append(
+            ToolCall(id=str(call.get("id") or f"call_{index}"), name=name, arguments=arguments)
+        )
+
+    raw_usage = body.get("usage")
+    usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
+    content = message.get("content")
+    return ModelReply(
+        text=(content or "").strip() if isinstance(content, str) else "",
+        tool_calls=calls,
+        stop_reason=str(choice.get("finish_reason") or ""),
+        input_tokens=int(usage.get("prompt_tokens") or 0),
+        output_tokens=int(usage.get("completion_tokens") or 0),
+    )
+
+
 def _openai_messages(messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
     """Render history in OpenAI's shape: a `tool` role, one message per result."""
     rendered: list[dict[str, Any]] = []
@@ -349,4 +520,9 @@ def adapter_for(provider: Any) -> Adapter:
         return AnthropicAdapter(provider)
     if name == "openai":
         return OpenAIAdapter(provider)
+    if name == "local" or getattr(provider, "base_url", ""):
+        # Matched on the base_url too: a local provider is labelled with the
+        # server it points at ("ollama", "lmstudio"), so dispatching on the
+        # name alone would send every one of them to the mock.
+        return LocalAdapter(provider)
     return MockAdapter()
