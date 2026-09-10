@@ -9,7 +9,7 @@ English · [日本語](README.ja.md)
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![838 tests](https://img.shields.io/badge/tests-838-brightgreen)
+![860 tests](https://img.shields.io/badge/tests-860-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -95,6 +95,32 @@ Calls that never dispatched get a synthetic `aborted before dispatch` result,
 because an assistant turn containing a call with no result is a request vendors
 reject — the next turn would fail on the history rather than on the
 cancellation.
+
+
+**Long conversations compact instead of failing.** A meeting chat runs out of
+context window eventually, and the provider's answer to that is a refused
+request. koe's answer is dsh's: at 80% of the window, replace the earliest part
+of the conversation with a summary of it — keeping the most recent 16% verbatim,
+because that is what the next answer depends on.
+
+Compaction **shadows rather than deletes**: the summary is appended and the
+range it stands for is marked, so both are still in the log and *what was
+compacted away* has an answer. The replacement lands at the position of the
+range it replaces, not at the end, or a summary of the beginning would appear
+after the middle. And a cut is only legal where no unanswered tool call crosses
+it — cutting elsewhere produces an assistant turn whose calls are answered by
+results the request no longer contains, which every vendor rejects.
+
+Pruning is tried first because it is free: the middle of an oversized tool
+result is replaced with a marker, no model involved. A 40,000-character file
+read is rarely needed in full three turns later, and removing its middle often
+relieves the pressure without spending a request.
+
+> The token meter is a heuristic, and it counts scripts separately on purpose.
+> English runs about four characters per token; Japanese is closer to *one*,
+> because most kanji are their own token. A `len // 4` estimator prices a
+> Japanese transcript **4.6× too low** — measured — so a harness using one would
+> sail past the context limit believing it had room.
 
 ```
 turn/start → step/start → assistant/message → tool/call ×3 → tool/result ×3
@@ -545,7 +571,7 @@ src/koe/
   routing/       Budgets, circuit breakers, fallback chains
   evaluation/    CER/WER/DER, VAD scoring, bootstrap CIs, gates, corpus
   pipeline/      VAD, acoustic features, endpointing, stabilization, sessions
-  harness/       Session log, inbox, tool scheduling, turn/step machine
+  harness/       Session log, inbox, scheduling, turn/step machine, compaction
   minutes/       議事録 schema, prompts, guardrails, generator
   telemetry/     Cost ledger, metrics, structured logging
   api/           FastAPI + WebSocket
@@ -558,7 +584,7 @@ deploy/          Dockerfile, compose, Terraform (ECS Fargate)
 
 ## Testing and CI
 
-838 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
+860 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
 
 CI runs eight jobs on every push:
 

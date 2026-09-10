@@ -61,6 +61,17 @@ STEP_END = "step/end"
 INBOX_SPLICED = "agent/inbox/spliced"
 REQUEST_HEADER = "request/header"
 
+#: Compaction. The bracket is a lock: an unmatched `compaction/start` in a log
+#: is a compaction that crashed, and it is meant to stay detectable.
+COMPACTION_START = "compaction/start"
+COMPACTION_SUMMARY = "compaction/summary"
+COMPACTION_PRUNE = "compaction/prune"
+COMPACTION_END = "compaction/end"
+#: Shadows a range of surface nodes. The replacement itself is an ordinary
+#: message event carrying this in its data, so the thing that replaces history
+#: is history.
+SURFACE_REPLACE = "surface/replace"
+
 #: Events that contribute to what the model sees. Everything else is
 #: bookkeeping: turn boundaries, headers, inbox splices. Keeping the list
 #: explicit is what stops a new event type silently entering the prompt.
@@ -137,6 +148,54 @@ class Session:
     def __iter__(self) -> Iterator[SessionEvent]:
         return iter(self._events)
 
+    def surface(self) -> list[int]:
+        """The seqs a model request would carry, in order.
+
+        The log is everything that happened; the **surface** is what is still
+        visible. Compaction does not delete -- it appends a replacement that
+        *shadows* a range, so the summary and the events it stands for both
+        remain, and "what was compacted away" has an answer.
+
+        Order matters and is subtle: a replacement lands at the *position of
+        the range it shadows*, not at the end. A summary written at seq 900 for
+        a range starting at seq 4 appears where seq 4 was, because that is
+        where the conversation it summarizes happened. Appending it at the end
+        would reorder the conversation.
+        """
+        shadowed: set[int] = set()
+        replacements: dict[int, list[int]] = {}
+        for event in self._events:
+            hidden = event.data.get("shadowed_seqs")
+            if event.type == SURFACE_REPLACE or (hidden and isinstance(hidden, list)):
+                seqs = [int(seq) for seq in hidden or []]
+                if not seqs:
+                    continue
+                shadowed.update(seqs)
+                # Anchored at the earliest node it replaces.
+                replacements.setdefault(min(seqs), []).append(event.seq)
+
+        visible: list[int] = []
+        for event in self._events:
+            if event.seq in shadowed:
+                # The replacement takes the position of the first node it
+                # shadows, so the summary reads where the conversation was.
+                for replacement in replacements.get(event.seq, ()):
+                    if replacement not in shadowed:
+                        visible.append(replacement)
+                continue
+            if event.type not in DERIVING:
+                continue
+            if event.data.get("shadowed_seqs"):
+                # Already placed at its anchor above.
+                continue
+            visible.append(event.seq)
+        return visible
+
+    def surface_events(self) -> list[SessionEvent]:
+        """The surface as events, in surface order."""
+        by_seq = {event.seq: event for event in self._events}
+        return [by_seq[seq] for seq in self.surface() if seq in by_seq]
+
     def of_type(self, *types: str) -> list[SessionEvent]:
         wanted = frozenset(types)
         return [event for event in self._events if event.type in wanted]
@@ -197,7 +256,7 @@ class Session:
                 messages.append(ChatMessage(role="tool", tool_results=list(pending_results)))
                 pending_results.clear()
 
-        for event in self._events:
+        for event in self.surface_events():
             if event.type not in DERIVING or event.type == SYSTEM_MESSAGE:
                 # The prompt is carried on the request as a field rather than as
                 # history: see `system_prompt`. Skipped so it cannot appear

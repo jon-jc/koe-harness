@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from koe.agent.loop import Adapter, ToolCall
+from koe.harness.compaction import Compactor, ModelSummarizer
 from koe.harness.inbox import NEXT_STEP, NEXT_TURN, Inbox, InboxTarget, Pending
 from koe.harness.scheduler import (
     DEFAULT_MAX_PARALLEL,
@@ -120,6 +121,7 @@ class HarnessAgent:
         max_parallel_tool_calls: int = DEFAULT_MAX_PARALLEL,
         owner: str = "chat",
         on_event: Listener | None = None,
+        compactor: Compactor | None = None,
     ) -> None:
         self.id = f"a_{uuid.uuid4().hex[:12]}"
         self.adapter = adapter
@@ -130,6 +132,10 @@ class HarnessAgent:
         self.max_parallel_tool_calls = max_parallel_tool_calls
         self.owner = owner
         self.on_event = on_event
+        #: Keeps the conversation inside the context window. Its own object
+        #: so a deployment can retune the thresholds, or swap the estimator
+        #: for a real tokenizer, without touching the loop.
+        self.compactor = compactor or Compactor()
 
         self._phase: Literal["idle", "running"] = "idle"
         self._turn = 0
@@ -303,8 +309,10 @@ class HarnessAgent:
 
     async def _step(self, turn: int, step: int, outcome: TurnOutcome) -> bool:
         """One model request and its tools. Returns whether to take another."""
-        history = self.session.derive_messages()
         schemas = self.tools.schemas()
+        await self._relieve_pressure(turn, step, schemas)
+
+        history = self.session.derive_messages()
         self._log_header(turn, step, schemas)
 
         reply = await self.adapter.reply(
@@ -376,6 +384,39 @@ class HarnessAgent:
             outcome.reason = "concluded"
             return False
         return not batch.aborted
+
+    async def _relieve_pressure(self, turn: int, step: int, schemas: list[dict[str, Any]]) -> None:
+        """Compact if the surface has grown into the context window.
+
+        At the step boundary, before the request is assembled, because that is
+        the last moment the decision can still change what gets sent. Pruning
+        is tried first: it costs nothing and often removes the pressure on its
+        own, and only if it does not is a summarizing request spent.
+
+        A failure here is logged and dropped. Compaction is what keeps a long
+        conversation possible; it is not worth ending a turn over, and the
+        request that follows will either fit or be refused by the provider with
+        a message the user can act on.
+        """
+        try:
+            measurement = self.compactor.meter.measure(self.session, schemas=schemas)
+            if not self.compactor.should_compact(measurement):
+                return
+
+            pruned = self.compactor.prune(self.session)
+            if pruned.ok:
+                await self._emit("compaction", {"turn": turn, "step": step, **pruned.to_dict()})
+                measurement = self.compactor.meter.measure(self.session, schemas=schemas)
+                if not self.compactor.should_compact(measurement):
+                    return
+
+            result = await self.compactor.compact(
+                self.session, ModelSummarizer(self.adapter), schemas=schemas
+            )
+            if result.ok or result.error:
+                await self._emit("compaction", {"turn": turn, "step": step, **result.to_dict()})
+        except Exception:
+            logger.exception("agent %s: compaction failed", self.id)
 
     def _accept_context(self, text: str) -> None:
         """Stage a tool's extra context for the next step.

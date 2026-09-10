@@ -9,7 +9,7 @@
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![838 tests](https://img.shields.io/badge/tests-838-brightgreen)
+![860 tests](https://img.shields.io/badge/tests-860-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -137,6 +137,31 @@ Windows では、**画面全体またはブラウザのタブ**を共有した�
 `aborted before dispatch` 結果が付きます。結果のない呼び出しを含む
 アシスタントターンは各社の API が拒否するため、次のターンがキャンセルではなく
 履歴を理由に失敗してしまうからです。
+
+
+**長い会話は失敗ではなく圧縮されます。** 会議のチャットはいずれコンテキスト
+ウィンドウを使い切り、プロバイダの回答は「リクエスト拒否」になります。koe の
+答えは dsh と同じです。ウィンドウの80%に達した時点で、会話の最初の部分を要約に
+置き換えます。直近16%はそのまま保持します。次の回答が依存するのはその部分だから
+です。
+
+圧縮は**削除ではなく遮蔽（shadow）**です。要約が追記され、それが代表する範囲に
+印が付きます。どちらもログに残るので「何が圧縮されたのか」に答えられます。置換は
+ログ末尾ではなく、置き換える範囲の位置に配置されます。そうしないと冒頭の要約が
+中盤より後ろに現れてしまいます。また、未応答のツール呼び出しをまたぐ位置では
+切断できません。そこで切ると、リクエストに含まれない結果によって応答される呼び出しを
+含むアシスタントターンができ、各社の API がこれを拒否します。
+
+無料なので刈り込み（prune）を先に試します。過大なツール結果の中間部分をマーカーに
+置き換えるだけで、モデルは使いません。4万文字のファイル読み取りが3ターン後に
+全文必要になることはまれで、中間を削るだけでリクエストを消費せず圧力が解消される
+ことがよくあります。
+
+> トークン計測はヒューリスティックであり、意図的に文字体系ごとに数えます。
+> 英語は1トークンあたり約4文字ですが、日本語は約1文字です。ほとんどの漢字が
+> それ自体で1トークンになるためです。`len // 4` 方式の推定は日本語の文字起こしを
+> **実測で4.6倍も過小評価**します。これを使うハーネスは、まだ余裕があると
+> 信じたままコンテキスト上限を超えてしまいます。
 
 ```
 turn/start → step/start → assistant/message → tool/call ×3 → tool/result ×3
