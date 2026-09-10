@@ -166,6 +166,31 @@ export interface Strings {
   readonly secAppearance: string;
   readonly secAbout: string;
   readonly secVocabulary: string;
+  readonly secLocal: string;
+  readonly localHint: string;
+  readonly localLlm: string;
+  readonly localAsr: string;
+  readonly localScan: string;
+  readonly localScanning: string;
+  readonly localNoneFound: string;
+  readonly localInstallHint: string;
+  readonly localPreferLabel: string;
+  readonly localPreferHint: string;
+  readonly localBaseUrl: string;
+  readonly localBaseUrlHint: string;
+  readonly localModelLabel: string;
+  readonly localAsrEnable: string;
+  readonly localAsrHint: string;
+  readonly localAsrMissing: string;
+  readonly localSize: string;
+  readonly localSizeHint: string;
+  readonly localNotForJa: string;
+  readonly localDownload: string;
+  readonly localSpeed: string;
+  readonly localInUse: string;
+  readonly localReady: string;
+  readonly localOnDevice: string;
+  readonly localApply: string;
   readonly vocabularyHint: string;
   readonly vocabularyFormat: string;
   readonly vocabularyPlaceholder: string;
@@ -386,6 +411,32 @@ const JA: Strings = {
   secAppearance: "表示",
   secAbout: "情報",
   secVocabulary: "単語登録",
+  secLocal: "ローカル",
+  localHint:
+    "このPC上のモデルで処理します。APIキーは不要で、費用もかかりません。音声認識をローカルにすると、音声はこの端末から一切送信されません。",
+  localLlm: "ローカル言語モデル",
+  localAsr: "ローカル音声認識",
+  localScan: "再検出",
+  localScanning: "検出中…",
+  localNoneFound: "起動中のローカルモデルサーバーが見つかりません。",
+  localInstallHint: "以下のいずれかを起動すると自動的に検出します。",
+  localPreferLabel: "ローカルを優先する",
+  localPreferHint: "APIキーが設定されていても、ローカルモデルを優先します。",
+  localBaseUrl: "接続先（任意）",
+  localBaseUrlHint: "空欄なら既知のポートを自動検出します。例: localhost:11434",
+  localModelLabel: "モデル（任意）",
+  localAsrEnable: "音声認識をこのPCで行う",
+  localAsrHint: "音声がこの端末から出ません。機密性の高い会議向けです。初回はモデルのダウンロードが発生します。",
+  localAsrMissing: "asr エクストラが必要です: pip install 'koe-harness[asr]'",
+  localSize: "モデルサイズ",
+  localSizeHint: "大きいほど精度が上がり、処理は遅くなります。",
+  localNotForJa: "日本語には非推奨",
+  localDownload: "ダウンロード",
+  localSpeed: "処理時間の目安",
+  localInUse: "使用中",
+  localReady: "利用可能",
+  localOnDevice: "この端末内",
+  localApply: "適用",
   vocabularyHint:
     "社名・製品名・人名など、認識エンジンが知りようのない語を登録します。文字起こしに反映されます。",
   vocabularyFormat: "1行に1件。「聞こえた形 => 正しい表記」で修正、矢印なしなら語の登録のみ。",
@@ -606,6 +657,33 @@ const EN: Strings = {
   secAppearance: "Appearance",
   secAbout: "About",
   secVocabulary: "Vocabulary",
+  secLocal: "Local",
+  localHint:
+    "Run models on this machine. No API key, no cost. With local recognition on, audio never leaves this device.",
+  localLlm: "Local language model",
+  localAsr: "Local speech recognition",
+  localScan: "Scan again",
+  localScanning: "Scanning...",
+  localNoneFound: "No local model server is running.",
+  localInstallHint: "Start any of these and koe will find it automatically.",
+  localPreferLabel: "Prefer local",
+  localPreferHint: "Use a local model even when an API key is configured.",
+  localBaseUrl: "Address (optional)",
+  localBaseUrlHint: "Leave empty to scan the well-known ports. For example: localhost:11434",
+  localModelLabel: "Model (optional)",
+  localAsrEnable: "Transcribe on this machine",
+  localAsrHint:
+    "Audio never leaves this device, which is what makes koe usable for confidential meetings. The model downloads once, on first use.",
+  localAsrMissing: "Needs the asr extra: pip install 'koe-harness[asr]'",
+  localSize: "Model size",
+  localSizeHint: "Larger is more accurate and slower.",
+  localNotForJa: "not suitable for Japanese",
+  localDownload: "download",
+  localSpeed: "time per minute of audio",
+  localInUse: "in use",
+  localReady: "ready",
+  localOnDevice: "on this device",
+  localApply: "Apply",
   vocabularyHint:
     "Names, acronyms and product words the recognizer has no way to know. Applied to transcripts as they arrive.",
   vocabularyFormat:

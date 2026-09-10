@@ -55,6 +55,7 @@ from koe.providers.credentials import (
     CredentialStore,
     Source,
 )
+from koe.providers.local.resolve import Choice
 from koe.providers.mock import MEETING_JA, MockASR, MockDiarization
 from koe.providers.verify import verify as verify_credential
 from koe.routing.budget import Budget, Priority
@@ -106,6 +107,11 @@ class Services:
     workspace: Workspace = field(default_factory=Workspace)
     #: Discovery and lifecycle for everything mounted on the kernel.
     plugins: PluginManager = field(init=False, repr=False)
+    #: The local backends most recently resolved, each with the sentence
+    #: explaining the outcome. Cached rather than re-probed, so a credential
+    #: change re-runs the policy without sweeping five ports again.
+    local_llm: Choice = field(default_factory=Choice, init=False)
+    local_asr: Choice = field(default_factory=Choice, init=False)
     ledger: CostLedger = field(default_factory=CostLedger)
     metrics: Metrics = field(default_factory=lambda: METRICS)
     #: Bounds concurrent streaming sessions. Each holds an audio buffer and a
@@ -201,16 +207,37 @@ class Services:
         self.plugins.activate_all()
 
     def refresh_llm(self) -> str:
-        """Point the LLM service at whichever credential is configured.
+        """Point the LLM service at whichever backend should be serving.
 
         Called at startup and again whenever a key is added or removed, so a
         user who pastes a key gets the real model on their next request rather
         than after a restart. Registering through the context rather than only
         assigning the attribute is what lets dependent plugins rebuild against
         the new client — the reason the kernel tracks services reactively.
+
+        Synchronous, and deliberately: the local backend is *resolved*
+        asynchronously by :meth:`rescan_local` because it probes the network,
+        but the policy that picks between local, cloud and mock is a pure
+        function of what has already been found. Keeping the two apart is what
+        lets a credential change re-run the policy without re-probing five
+        ports.
         """
         chosen = "mock"
         provider: Any = demo_llm()
+
+        # Asked for explicitly. A local model that is actually running wins over
+        # a key, which is the whole point of the setting: a privacy-motivated
+        # user should not have to delete their credentials to stop them being
+        # used.
+        if (
+            not self.settings.force_mock_providers
+            and self.settings.prefer_local_llm
+            and self.local_llm
+        ):
+            self.llm = self.local_llm.provider
+            self.ctx.provide("llm", self.llm, replace=True)
+            logger.info("llm provider selected", extra={"provider": "local"})
+            return "local"
 
         if not self.settings.force_mock_providers:
             # A key alone is not enough: the vendor SDK is an optional
@@ -239,10 +266,56 @@ class Services:
                 chosen = candidate
                 break
 
+        if chosen == "mock" and not self.settings.force_mock_providers and self.local_llm:
+            # No key, but something is running on this machine. Better than the
+            # mock by a wide margin, and it costs nothing to use.
+            provider = self.local_llm.provider
+            chosen = "local"
+
         self.llm = provider
         self.ctx.provide("llm", provider, replace=True)
         logger.info("llm provider selected", extra={"provider": chosen})
         return chosen
+
+    async def rescan_local(self) -> str:
+        """Probe for local backends, then re-run the selection policy.
+
+        The only async part of provider selection, because it is the only part
+        that asks the network a question. Called at startup and whenever the
+        user changes a local setting.
+        """
+        from koe.providers.local.resolve import resolve_asr, resolve_llm
+
+        if self.settings.force_mock_providers:
+            # The demo path stays deterministic. Probing here would make CI's
+            # behaviour depend on what happens to be listening on the runner.
+            self.local_llm = Choice(reason="mock providers are forced")
+            self.local_asr = Choice(reason="mock providers are forced")
+            return self.refresh_llm()
+
+        self.local_llm = await resolve_llm(self.settings)
+        self.local_asr = resolve_asr(self.settings)
+        self.apply_local_asr()
+        logger.info(
+            "local backends resolved",
+            extra={"llm": self.local_llm.reason, "asr": self.local_asr.reason},
+        )
+        return self.refresh_llm()
+
+    def apply_local_asr(self) -> None:
+        """Register or remove local Whisper on the ASR router.
+
+        Registered *alongside* the other backends rather than replacing them,
+        because that is what the router is for: local Whisper is free and slow,
+        a hosted vendor is quick and metered, and which one a given request
+        should use is exactly the trade the router exists to make. Switching
+        local recognition on narrows the choice rather than removing it.
+        """
+        name = "local-whisper"
+        if self.local_asr:
+            self.asr_router.register(self.local_asr.provider)
+        else:
+            self.asr_router.unregister(name)
 
     @contextlib.asynccontextmanager
     async def session_slot(self) -> AsyncIterator[bool]:
@@ -305,6 +378,23 @@ class Services:
 # --------------------------------------------------------------------------
 # schemas
 # --------------------------------------------------------------------------
+
+
+class LocalUpdate(BaseModel):
+    """Local-model settings. Every field optional: the panel sends deltas.
+
+    None means "leave this alone", which is what lets one control change one
+    thing without the others racing it — a panel that sent the whole object
+    would have the ASR toggle undo an in-flight base URL edit.
+    """
+
+    base_url: str | None = Field(default=None, max_length=2_048)
+    model: str | None = Field(default=None, max_length=256)
+    api_key: str | None = Field(default=None, max_length=512)
+    prefer: bool | None = None
+    asr_enabled: bool | None = None
+    asr_model: str | None = Field(default=None, max_length=64)
+    asr_device: str | None = Field(default=None, pattern="^(auto|cpu|cuda)$")
 
 
 class VocabularyUpdate(BaseModel):
@@ -605,6 +695,101 @@ def build_router(services: Services) -> APIRouter:
     async def list_plugins() -> JSONResponse:
         """Everything mounted on the kernel, first-party tools included."""
         return JSONResponse(services.plugins.to_dict())
+
+    # ------------------------------------------------------------ local models
+
+    def _local_payload() -> dict[str, Any]:
+        from koe.providers.local.endpoints import WELL_KNOWN
+        from koe.providers.local.whisper import SIZES
+        from koe.providers.local.whisper import available as whisper_available
+
+        settings_now = services.settings
+        return {
+            "llm": {
+                "active": bool(services.local_llm),
+                "reason": services.local_llm.reason,
+                "base_url": settings_now.local_llm_base_url,
+                "model": settings_now.local_llm_model,
+                "prefer": settings_now.prefer_local_llm,
+                # Whether the *serving* provider is the local one, which is not
+                # the same as one being available: a configured API key wins
+                # unless `prefer` says otherwise, and the panel must not claim
+                # a model is in use when it is merely ready.
+                "in_use": getattr(services.llm, "base_url", "") != "",
+            },
+            "asr": {
+                "active": bool(services.local_asr),
+                "reason": services.local_asr.reason,
+                "enabled": settings_now.local_asr_enabled,
+                "installed": whisper_available(),
+                "model": settings_now.local_asr_model,
+                "device": settings_now.local_asr_device,
+                "sizes": [
+                    {
+                        "id": size.id,
+                        "label": size.label,
+                        "download_mb": size.download_mb,
+                        "typical_rtf": size.typical_rtf,
+                        "suitable_ja": Language.JA in size.suitable,
+                        "suitable_en": Language.EN in size.suitable,
+                    }
+                    for size in SIZES
+                ],
+            },
+            "known_servers": [
+                {"id": s.id, "label": s.label, "port": s.port, "docs_url": s.docs_url}
+                for s in WELL_KNOWN
+            ],
+        }
+
+    @router.get("/v1/local")
+    async def local_status() -> JSONResponse:
+        """What local inference is available, and what is actually serving."""
+        return JSONResponse(_local_payload())
+
+    @router.post("/v1/local/discover")
+    async def local_discover() -> JSONResponse:
+        """Sweep the well-known ports and report what answered.
+
+        A POST because it is not free — it opens sockets — and because the
+        panel triggers it from a button rather than on every render.
+        """
+        from koe.providers.local.discovery import discover
+
+        sweep = await discover()
+        return JSONResponse(sweep.to_dict())
+
+    @router.put("/v1/local")
+    async def local_update(request: LocalUpdate) -> JSONResponse:
+        """Change local-model settings and re-resolve.
+
+        Settings are mutated on the live object rather than persisted: koe
+        reads configuration from the environment, and a panel that silently
+        wrote a config file would make the environment stop being the answer to
+        "why is it doing that". The panel says the choice lasts for this run.
+        """
+        settings_now = services.settings
+        if request.base_url is not None:
+            settings_now.local_llm_base_url = request.base_url.strip()
+        if request.model is not None:
+            settings_now.local_llm_model = request.model.strip()
+        if request.api_key is not None:
+            settings_now.local_llm_api_key = request.api_key.strip()
+        if request.prefer is not None:
+            settings_now.prefer_local_llm = request.prefer
+        if request.asr_enabled is not None:
+            settings_now.local_asr_enabled = request.asr_enabled
+        if request.asr_model is not None:
+            from koe.providers.local.whisper import SIZES_BY_ID
+
+            if request.asr_model not in SIZES_BY_ID:
+                raise HTTPException(status_code=400, detail=f"unknown size {request.asr_model!r}")
+            settings_now.local_asr_model = request.asr_model
+        if request.asr_device is not None:
+            settings_now.local_asr_device = request.asr_device
+
+        await services.rescan_local()
+        return JSONResponse(_local_payload())
 
     # -------------------------------------------------------------- vocabulary
 
@@ -1460,6 +1645,17 @@ def create_app(services: Services | None = None) -> FastAPI:
                 "japanese_tokenizer": "mecab" if mecab_available() else "character",
             },
         )
+
+        # Probing happens at startup rather than on the first request, so a
+        # user who already has Ollama running finds koe using it instead of
+        # finding a settings panel and a decision to make. Failure here is a
+        # log line: a machine with no local models is the ordinary case, not
+        # a broken one.
+        try:
+            await resolved.rescan_local()
+        except Exception:
+            logger.exception("local backend discovery failed")
+
         try:
             yield
         finally:

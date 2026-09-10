@@ -120,6 +120,7 @@ export type Section =
   | "recognition"
   | "models"
   | "plugins"
+  | "local"
   | "vocabulary"
   | "appearance"
   | "about";
@@ -129,10 +130,56 @@ const SECTIONS: readonly Section[] = [
   "recognition",
   "models",
   "plugins",
+  "local",
   "vocabulary",
   "appearance",
   "about",
 ];
+
+interface WhisperSize {
+  readonly id: string;
+  readonly label: string;
+  readonly download_mb: number;
+  readonly typical_rtf: number;
+  readonly suitable_ja: boolean;
+  readonly suitable_en: boolean;
+}
+
+interface DiscoveredServer {
+  readonly server_id: string;
+  readonly label: string;
+  readonly base_url: string;
+  readonly ready: boolean;
+  readonly local: boolean;
+  readonly note: string;
+  readonly models: readonly { id: string; parameters: string; quantization: string }[];
+}
+
+interface LocalState {
+  readonly llm: {
+    readonly active: boolean;
+    readonly in_use: boolean;
+    readonly reason: string;
+    readonly base_url: string;
+    readonly model: string;
+    readonly prefer: boolean;
+  };
+  readonly asr: {
+    readonly active: boolean;
+    readonly enabled: boolean;
+    readonly installed: boolean;
+    readonly reason: string;
+    readonly model: string;
+    readonly device: string;
+    readonly sizes: readonly WhisperSize[];
+  };
+  readonly known_servers: readonly {
+    id: string;
+    label: string;
+    port: number;
+    docs_url: string;
+  }[];
+}
 
 interface VocabularyState {
   readonly enabled: boolean;
@@ -172,6 +219,10 @@ export class SettingsDialog {
   private health: Health | null = null;
   private devices: InputDevice[] = [];
   private pluginListing: PluginListing | null = null;
+  private local: LocalState | null = null;
+  private discovered: DiscoveredServer[] = [];
+  private scanning = false;
+  private scanned = false;
   private vocabulary: VocabularyState | null = null;
   private vocabularyDraft: string | null = null;
   private toolRecords: ToolRecord[] = [];
@@ -245,6 +296,7 @@ export class SettingsDialog {
       this.loadDevices(),
       this.loadPlugins(),
       this.loadVocabulary(),
+      this.loadLocal(),
     ]);
     this.render();
   }
@@ -315,6 +367,7 @@ export class SettingsDialog {
       recognition: s.secRecognition,
       models: s.secModels,
       plugins: s.secPlugins,
+      local: s.secLocal,
       vocabulary: s.secVocabulary,
       appearance: s.secAppearance,
       about: s.secAbout,
@@ -345,7 +398,9 @@ export class SettingsDialog {
             ? this.modelsSection()
             : this.section === "plugins"
               ? this.pluginsSection()
-              : this.section === "vocabulary"
+              : this.section === "local"
+                ? this.localSection()
+                : this.section === "vocabulary"
                 ? this.vocabularySection()
                 : this.section === "appearance"
                   ? this.appearanceSection()
@@ -755,6 +810,233 @@ export class SettingsDialog {
   }
 
   /* ------------------------------------------------------------- plugins */
+
+  /* --------------------------------------------------------------- local */
+
+  private localSection(): HTMLElement[] {
+    const s = this.strings;
+    const state = this.local;
+    const parts: HTMLElement[] = [];
+
+    if (!state) {
+      parts.push(h("p", { class: "note", text: s.cannotConnect }));
+      return parts;
+    }
+
+    parts.push(h("p", { class: "note", style: "margin:0 0 16px", text: s.localHint }));
+
+    // ---- language model -------------------------------------------------
+    parts.push(h("p", { class: "label", text: s.localLlm }));
+
+    const status = h("div", { class: "row", style: "margin:6px 0 10px;gap:8px" });
+    if (state.llm.in_use) {
+      status.append(h("span", { class: "chip live", text: s.localInUse }));
+    } else if (state.llm.active) {
+      status.append(h("span", { class: "chip", text: s.localReady }));
+    }
+    status.append(h("span", { class: "note", text: state.llm.reason }));
+    parts.push(status);
+
+    if (this.discovered.length > 0) {
+      for (const server of this.discovered) parts.push(this.serverCard(server));
+    } else if (this.scanned) {
+      // Only after an actual scan. Saying "nothing found" before looking is a
+      // claim the panel has not earned.
+      parts.push(h("p", { class: "note", text: s.localNoneFound }));
+      parts.push(h("p", { class: "note", text: s.localInstallHint }));
+      const links = h("div", { class: "row", style: "gap:10px;margin:6px 0 12px;flex-wrap:wrap" });
+      for (const server of state.known_servers) {
+        links.append(
+          h("a", {
+            class: "note",
+            href: server.docs_url,
+            target: "_blank",
+            rel: "noreferrer noopener",
+            text: server.label + " :" + server.port,
+          }),
+        );
+      }
+      parts.push(links);
+    }
+
+    const scan = h("button", {
+      class: "btn ghost",
+      type: "button",
+      text: this.scanning ? s.localScanning : s.localScan,
+    }) as HTMLButtonElement;
+    scan.disabled = this.scanning;
+    scan.addEventListener("click", () => void this.scanLocal());
+    parts.push(h("div", { class: "row", style: "margin-bottom:14px" }, scan));
+
+    parts.push(
+      this.toggle(s.localPreferLabel, state.llm.prefer, (on) =>
+        void this.saveLocal({ prefer: on }),
+      ),
+    );
+    parts.push(h("p", { class: "note", style: "margin:-4px 0 14px", text: s.localPreferHint }));
+
+    parts.push(h("p", { class: "label", text: s.localBaseUrl }));
+    const baseUrl = h("input", {
+      class: "input",
+      type: "text",
+      spellcheck: "false",
+      autocomplete: "off",
+      placeholder: "localhost:11434",
+      "aria-label": s.localBaseUrl,
+    }) as HTMLInputElement;
+    baseUrl.value = state.llm.base_url;
+
+    const model = h("input", {
+      class: "input",
+      type: "text",
+      spellcheck: "false",
+      autocomplete: "off",
+      placeholder: "qwen2.5:7b",
+      "aria-label": s.localModelLabel,
+    }) as HTMLInputElement;
+    model.value = state.llm.model;
+
+    const apply = h("button", { class: "btn", type: "button", text: s.localApply });
+    apply.addEventListener("click", () => {
+      void this.saveLocal({ base_url: baseUrl.value, model: model.value });
+    });
+
+    parts.push(baseUrl);
+    parts.push(h("p", { class: "note", style: "margin:4px 0 10px", text: s.localBaseUrlHint }));
+    parts.push(h("p", { class: "label", text: s.localModelLabel }));
+    parts.push(model);
+    parts.push(h("div", { class: "row", style: "margin:10px 0 20px" }, apply));
+
+    // ---- speech recognition ---------------------------------------------
+    parts.push(
+      h("p", {
+        class: "label",
+        style: "padding-top:16px;border-top:1px solid var(--border)",
+        text: s.localAsr,
+      }),
+    );
+
+    if (!state.asr.installed) {
+      // The library is absent, so the toggle would set something that cannot
+      // take effect. Say why rather than offering a dead control.
+      parts.push(h("p", { class: "note", text: s.localAsrMissing }));
+      return parts;
+    }
+
+    parts.push(
+      this.toggle(s.localAsrEnable, state.asr.enabled, (on) =>
+        void this.saveLocal({ asr_enabled: on }),
+      ),
+    );
+    parts.push(h("p", { class: "note", style: "margin:-4px 0 14px", text: s.localAsrHint }));
+
+    if (state.asr.enabled) {
+      parts.push(h("p", { class: "label", text: s.localSize }));
+      for (const size of state.asr.sizes) parts.push(this.sizeCard(size, state.asr.model));
+      parts.push(h("p", { class: "note", style: "margin-top:8px", text: s.localSizeHint }));
+    }
+
+    return parts;
+  }
+
+  private serverCard(server: DiscoveredServer): HTMLElement {
+    const s = this.strings;
+    const card = h("div", { class: "card" });
+    const head = h("div", { class: "row", style: "gap:8px;align-items:center" });
+    head.append(h("strong", { text: server.label }));
+    if (server.local) {
+      // Claimed only for loopback. A model server on the LAN is a perfectly
+      // good deployment and a different promise, and the panel must not make
+      // the stronger one on its behalf.
+      head.append(h("span", { class: "chip", text: s.localOnDevice }));
+    }
+    card.append(head);
+
+    if (server.models.length === 0) {
+      card.append(h("p", { class: "note", text: server.note }));
+      return card;
+    }
+
+    for (const entry of server.models) {
+      const row = h("div", { class: "row", style: "gap:8px;margin-top:6px" });
+      const pick = h("button", { class: "btn ghost", type: "button", text: entry.id });
+      pick.addEventListener("click", () => {
+        void this.saveLocal({ base_url: server.base_url, model: entry.id });
+      });
+      row.append(pick);
+      // Parameter count and quantization are what say whether a model fits in
+      // this machine's RAM, which is the question being asked here.
+      const detail = [entry.parameters, entry.quantization].filter(Boolean).join(" \u00b7 ");
+      if (detail) row.append(h("span", { class: "note", text: detail }));
+      card.append(row);
+    }
+    return card;
+  }
+
+  private sizeCard(size: WhisperSize, selected: string): HTMLElement {
+    const s = this.strings;
+    const on = size.id === selected;
+    const card = h("button", { class: "card picker" + (on ? " on" : ""), type: "button" });
+    const head = h("div", { class: "row", style: "gap:8px;align-items:center" });
+    head.append(h("strong", { text: size.label }));
+    if (!size.suitable_ja) {
+      // koe is a bilingual tool. Presenting these as a neutral speed slider
+      // would mislead in exactly the case it exists for.
+      head.append(h("span", { class: "chip warn", text: s.localNotForJa }));
+    }
+    card.append(head);
+    const seconds = Math.round(size.typical_rtf * 60);
+    card.append(
+      h("p", {
+        class: "note",
+        text: size.download_mb + " MB " + s.localDownload + " \u00b7 ~" + seconds + "s " + s.localSpeed,
+      }),
+    );
+    card.addEventListener("click", () => void this.saveLocal({ asr_model: size.id }));
+    return card;
+  }
+
+  private async loadLocal(): Promise<void> {
+    try {
+      const response = await fetch("/v1/local");
+      if (response.ok) this.local = (await response.json()) as LocalState;
+    } catch {
+      /* the section says it could not load rather than rendering empty */
+    }
+  }
+
+  private async scanLocal(): Promise<void> {
+    this.scanning = true;
+    this.render();
+    try {
+      const response = await fetch("/v1/local/discover", { method: "POST" });
+      if (response.ok) {
+        const sweep = (await response.json()) as { servers: DiscoveredServer[] };
+        this.discovered = sweep.servers;
+      }
+    } catch {
+      this.discovered = [];
+    } finally {
+      this.scanning = false;
+      this.scanned = true;
+      await this.loadLocal();
+      this.render();
+    }
+  }
+
+  private async saveLocal(patch: Record<string, unknown>): Promise<void> {
+    try {
+      const response = await fetch("/v1/local", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (response.ok) this.local = (await response.json()) as LocalState;
+    } catch {
+      /* the reason line keeps whatever the server last resolved */
+    }
+    this.render();
+  }
 
   private vocabularySection(): HTMLElement[] {
     const s = this.strings;

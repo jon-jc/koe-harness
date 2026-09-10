@@ -9,7 +9,7 @@ English · [日本語](README.ja.md)
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![413 tests](https://img.shields.io/badge/tests-413-brightgreen)
+![763 tests](https://img.shields.io/badge/tests-763-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -63,6 +63,53 @@ dropped 1 unsupported claim(s):
 
 That last line is the point of the whole LLM layer. See
 [Hallucination detection](#hallucination-detection-that-is-a-string-operation).
+
+### Running entirely on your own machine
+
+koe works with no API key and no account. Settings → Local.
+
+**Language models.** Start Ollama, LM Studio, llama.cpp's server, vLLM or Jan
+and koe finds it — it probes the ports those projects ship with, concurrently,
+at startup. There is nothing to configure, because the machine already knows
+which models it has:
+
+```
+Ollama  ·  on this device
+  qwen2.5:7b     7.6B · Q4_K_M
+  llama3.2:3b    3.2B · Q4_K_M
+```
+
+A configured API key still wins by default, because pasting one is a
+preference and a server listening on 11434 is not. **Prefer local** inverts
+that, which is the switch to use if you would rather not have to delete your
+credentials to stop them being used.
+
+**Speech recognition.** Turn on local recognition and audio never leaves the
+device — the reason koe can be pointed at a confidential meeting at all. It
+runs [faster-whisper](https://github.com/SYSTRAN/faster-whisper) in-process:
+
+```bash
+pip install 'koe-harness[asr]'
+```
+
+The size list is not a neutral speed slider, and koe does not present it as
+one. Whisper's training mix is overwhelmingly English, and the small
+checkpoints spend what multilingual capacity they have on languages close to
+it — so `tiny` and `base` produce English that is rough but usable and Japanese
+that is not. Those are marked **not suitable for Japanese** rather than left
+for you to discover from a meeting transcript. `large-v3-turbo` is the default:
+within a point or two of `large-v3` on Japanese at a third of the compute.
+
+Local backends join the router rather than replacing it. Local inference is
+free and slow; a hosted vendor is quick and metered; which one a given request
+should use is exactly the trade the router exists to make. So the providers
+declare their disadvantages honestly — a zero-cost backend with no
+counterweight would win every routing decision, and koe would feel broken
+rather than free.
+
+> The per-language error rates for the Whisper sizes and for local LLMs are
+> **priors, not measurements** — `ProviderInfo.measured` is `False` until the
+> eval harness has run against a given backend on your hardware.
 
 ### The vocabulary
 
@@ -415,6 +462,7 @@ src/koe/
   domain/        Audio (hot path, dataclasses) and transcripts (pydantic)
   providers/     ASR / diarization / LLM behind narrow protocols
     llm/         Anthropic + OpenAI adapters
+    local/       On-device: server discovery, OpenAI-compatible client, Whisper
   routing/       Budgets, circuit breakers, fallback chains
   evaluation/    CER/WER/DER, bootstrap CIs, regression gates, corpus
   pipeline/      VAD, endpointing, stabilization, streaming sessions
@@ -430,7 +478,7 @@ deploy/          Dockerfile, compose, Terraform (ECS Fargate)
 
 ## Testing and CI
 
-400 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
+763 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
 
 CI runs eight jobs on every push:
 

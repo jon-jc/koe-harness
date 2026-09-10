@@ -36,6 +36,21 @@ Docker build, across Python 3.11/3.12 with and without MeCab.
 in so `koe serve` works without a Node toolchain. CI rebuilds them and fails if
 the committed copies are stale.
 
+**If you have installed the `asr` extra, mypy needs a flag:**
+
+```bash
+mypy --python-version 3.12
+```
+
+numpy 2.5's stubs use `type` statements, which are 3.12 syntax, so mypy cannot
+parse them under the `python_version = "3.11"` this project pins — and it is a
+parse failure, so no per-module override suppresses it. The pin stays: koe
+supports 3.11, CI tests 3.11, and weakening the check everywhere to accommodate
+one optional dependency's stubs would give up a real guarantee for a
+convenience. CI does not install `asr`, so it never sees this. koe's own code
+touches numpy through a handful of `Any` values inside a single function, so
+nothing is lost by checking it at 3.12 locally.
+
 ## What good looks like here
 
 This codebase has a consistent style that is more about *reasoning* than
