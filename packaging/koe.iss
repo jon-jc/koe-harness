@@ -24,7 +24,11 @@
 ;     the user is told where to get it rather than met with a blank window.
 
 #define AppName "koe"
-#define AppVersion "0.1.0"
+; Passed by build.py as /DAppVersion=<version>; this is only the fallback for
+; compiling the script by hand.
+#ifndef AppVersion
+  #define AppVersion "0.1.0"
+#endif
 #define AppPublisher "jon-jc"
 #define AppURL "https://github.com/jon-jc/koe-harness"
 #define AppExe "koe.exe"
@@ -39,6 +43,13 @@ AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
 VersionInfoVersion={#AppVersion}
+
+; An update runs while the old koe may still be closing. The updater starts
+; this installer with the app's PID and the [Code] below waits for that process
+; to end; Restart Manager is the backstop for anything still holding a file.
+CloseApplications=yes
+CloseApplicationsFilter=*.exe,*.dll,*.pyd
+RestartApplications=no
 
 ; Per-user: no elevation, no UAC prompt, and no chooser dialog.
 PrivilegesRequired=lowest
@@ -93,6 +104,10 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent
+; "Restart to update" relaunches after a silent install. The entry above is
+; skipped when silent by design, and this one never runs unless asked for with
+; /relaunch=1, so a person's interactive install is unchanged.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: RelaunchRequested
 
 [UninstallDelete]
 ; Logs and the webview cache are generated at runtime and are not tracked by
@@ -107,6 +122,42 @@ Type: filesandordirs; Name: "{localappdata}\koe\webview"
 Type: files; Name: "{localappdata}\koe\koe.lock"
 
 [Code]
+const
+  SYNCHRONIZE = $00100000;
+  WAIT_FOR_APP_MS = 60000;
+
+function OpenProcess(DesiredAccess: Cardinal; InheritHandle: BOOL; ProcessId: Cardinal): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+function WaitForSingleObject(Handle: THandle; Milliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function RelaunchRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;
+
+// The updater passes /waitpid=<pid>. Nothing is replaced until that process
+// has exited, so the installer and the app never hold the same files at once.
+procedure WaitForUpdatingApp;
+var
+  Pid: Integer;
+  Handle: THandle;
+begin
+  Pid := StrToIntDef(ExpandConstant('{param:waitpid|0}'), 0);
+  if Pid <= 0 then
+    exit;
+  Handle := OpenProcess(SYNCHRONIZE, False, Pid);
+  if Handle = 0 then
+    exit; // already gone
+  try
+    WaitForSingleObject(Handle, WAIT_FOR_APP_MS);
+  finally
+    CloseHandle(Handle);
+  end;
+end;
+
 function WebView2Installed: Boolean;
 var
   Version: String;
@@ -125,7 +176,10 @@ end;
 function InitializeSetup: Boolean;
 begin
   Result := True;
-  if not WebView2Installed then
+  WaitForUpdatingApp;
+  // An update is by definition going onto a machine that already runs koe,
+  // so the runtime warning is only for a person installing interactively.
+  if not WizardSilent and not WebView2Installed then
     // Warn rather than block: the runtime can be installed afterwards, and
     // refusing the install outright would be more annoying than useful.
     MsgBox(ExpandConstant('{cm:WebView2Missing}'), mbInformation, MB_OK);

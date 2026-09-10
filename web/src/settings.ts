@@ -145,6 +145,60 @@ interface WhisperSize {
   readonly suitable_en: boolean;
 }
 
+/** `GET /v1/update`, which only the installed desktop app serves. */
+export interface UpdateStatus {
+  readonly state:
+    | "disabled"
+    | "idle"
+    | "checking"
+    | "current"
+    | "downloading"
+    | "ready"
+    | "applying"
+    | "error";
+  readonly current: string;
+  readonly channel: string;
+  readonly auto: boolean;
+  readonly available: string;
+  readonly progress: number;
+  readonly error: string;
+  readonly checked_at: number;
+  readonly notes_url: string;
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function fill(template: string, values: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => values[key] ?? "");
+}
+
+/** One sentence for where an update stands. */
+export function describeUpdate(update: UpdateStatus, s: Strings): string {
+  switch (update.state) {
+    case "disabled":
+      return s.updateDisabled;
+    case "checking":
+      return s.updateChecking;
+    case "downloading":
+      return fill(s.updateDownloading, {
+        v: update.available,
+        p: String(Math.round(update.progress * 100)),
+      });
+    case "ready":
+      return fill(s.updateReady, { v: update.available });
+    case "applying":
+      return s.updateApplying;
+    case "error":
+      return fill(s.updateError, { e: update.error });
+    case "current":
+      return update.checked_at
+        ? `${s.updateCurrent} · ${fill(s.updateChecked, { t: new Date(update.checked_at * 1000).toLocaleString() })}`
+        : s.updateCurrent;
+    default:
+      return s.updateIdle;
+  }
+}
+
 interface DiscoveredServer {
   readonly server_id: string;
   readonly label: string;
@@ -308,6 +362,7 @@ export class SettingsDialog {
       this.loadPlugins(),
       this.loadVocabulary(),
       this.loadLocal(),
+      this.loadUpdate(),
     ]);
     this.render();
   }
@@ -787,13 +842,135 @@ export class SettingsDialog {
 
   /* --------------------------------------------------------------- about */
 
+  /** Where updates stand. Null outside the installed app, which has none. */
+  private update: UpdateStatus | null = null;
+
+  private async loadUpdate(): Promise<void> {
+    try {
+      const response = await fetch("/v1/update");
+      this.update = response.ok ? ((await response.json()) as UpdateStatus) : null;
+    } catch {
+      this.update = null;
+    }
+  }
+
+  private updateSection(update: UpdateStatus): HTMLElement[] {
+    const s = this.strings;
+    const parts: HTMLElement[] = [this.heading(s.updateHeading)];
+    parts.push(
+      h("p", {
+        class: `update-line ja${update.state === "error" ? " bad" : ""}`,
+        text: describeUpdate(update, s),
+      }),
+    );
+
+    if (update.state === "downloading") {
+      const fillBar = h("i");
+      fillBar.style.width = `${Math.round(update.progress * 100)}%`;
+      parts.push(h("div", { class: "update-progress" }, fillBar));
+    }
+
+    if (update.state === "disabled") return parts;
+
+    const actions = h("div", { class: "row", style: "gap:8px;margin:10px 0 14px" });
+    if (update.state === "ready") {
+      const restart = h("button", { class: "btn", type: "button", text: s.updateRestart });
+      restart.addEventListener("click", () => void this.applyUpdate());
+      actions.append(restart);
+    }
+    const check = h("button", { class: "btn ghost", type: "button", text: s.updateCheckNow });
+    check.disabled = ["checking", "downloading", "applying", "ready"].includes(update.state);
+    check.addEventListener("click", () => void this.checkUpdate());
+    actions.append(check);
+    if (update.notes_url && update.available) {
+      actions.append(
+        h("a", {
+          class: "note",
+          href: update.notes_url,
+          target: "_blank",
+          rel: "noreferrer",
+          text: s.updateNotes,
+        }),
+      );
+    }
+    parts.push(actions);
+
+    parts.push(this.toggle(s.updateAuto, update.auto, (on) => void this.setAutoUpdate(on)));
+    parts.push(h("p", { class: "note ja", text: s.updateAutoHint }));
+    return parts;
+  }
+
+  /**
+   * Check, and follow the download while it runs.
+   *
+   * The check request does not return until any download has finished, so
+   * the status is polled alongside it — a progress bar that sits at zero for
+   * fifty megabytes and then jumps to done is not a progress bar.
+   */
+  private async checkUpdate(): Promise<void> {
+    if (!this.update) return;
+    this.update = { ...this.update, state: "checking", error: "" };
+    this.render();
+
+    let settled = false;
+    const request = this.postUpdate("/v1/update/check", {}).finally(() => {
+      settled = true;
+    });
+    while (!settled && this.dialog.open) {
+      await delay(600);
+      if (settled) break;
+      await this.loadUpdate();
+      if (this.dialog.open && this.section === "about") this.render();
+    }
+    await request;
+    if (this.dialog.open) this.render();
+  }
+
+  private async applyUpdate(): Promise<void> {
+    if (this.host.isRecording()) {
+      this.notify.error(this.strings.updateStopRecording);
+      return;
+    }
+    if (await this.postUpdate("/v1/update/apply", { relaunch: true })) {
+      this.notify.info(this.strings.updateApplying);
+      this.render();
+    }
+  }
+
+  private async setAutoUpdate(on: boolean): Promise<void> {
+    await this.postUpdate("/v1/update/auto", { enabled: on });
+    this.render();
+  }
+
+  private async postUpdate(path: string, body: Record<string, unknown>): Promise<boolean> {
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!response.ok) {
+        this.notify.error(String(payload.detail ?? response.status));
+        return false;
+      }
+      this.update = payload as unknown as UpdateStatus;
+      return true;
+    } catch {
+      this.notify.error(this.strings.cannotConnect);
+      return false;
+    }
+  }
+
   private aboutSection(): HTMLElement[] {
     const s = this.strings;
     const parts: HTMLElement[] = [];
     const rows: Array<[string, string]> = [];
 
     if (this.health) {
-      rows.push([s.version, this.health.version]);
+      // The build's own stamp when there is one: the package version is the
+      // same for every build, and "which build is this" is the question.
+      rows.push([s.version, this.update?.current ?? this.health.version]);
       rows.push([s.japaneseTokenizer, this.health.japanese_tokenizer]);
     }
     if (this.listing) {
@@ -806,8 +983,13 @@ export class SettingsDialog {
     for (const [label, value] of rows) {
       body.append(h("tr", {}, h("td", { text: label }), h("td", { class: "num", text: value })));
     }
+    if (this.update) {
+      body.append(h("tr", {}, h("td", { text: s.updateChannel }), h("td", { class: "num", text: this.update.channel })));
+    }
     table.append(body);
     parts.push(table);
+
+    if (this.update) parts.push(...this.updateSection(this.update));
 
     parts.push(this.heading(s.restoreDefaults));
     const reset = h("button", { class: "btn ghost", type: "button", text: s.restoreDefaults });

@@ -39,7 +39,7 @@ import { CommandPalette, type Command } from "./palette";
 import { PtyPanel } from "./panels/pty";
 import { TerminalPanel } from "./panels/terminal";
 import * as prefs from "./prefs";
-import { SettingsDialog, ShortcutsDialog, type SettingsHost } from "./settings";
+import { SettingsDialog, ShortcutsDialog, type SettingsHost, type UpdateStatus } from "./settings";
 import { Sessions } from "./sessions";
 import { Shell } from "./shell";
 import {
@@ -215,6 +215,7 @@ class App {
   private codeLabel = "";
   /** The language the labels were last rendered in; see renderLabels. */
   private labelsLang = "";
+  private updateState: UpdateStatus | null = null;
   private readonly shell: Shell;
   private readonly sessions: Sessions;
   private terminal: TerminalPanel | null = null;
@@ -271,6 +272,9 @@ class App {
     panelTitle: el<HTMLElement>("panel-title"),
     panelClose: el<HTMLButtonElement>("panel-close"),
     cmdk: el<HTMLButtonElement>("cmdk"),
+    updatePill: el<HTMLButtonElement>("update-pill"),
+    updatePillText: el<HTMLElement>("update-pill-text"),
+    updatePillAction: el<HTMLElement>("update-pill-action"),
   };
 
   private readonly notify = new Notifications(undefined, this.refs.live);
@@ -323,6 +327,7 @@ class App {
     void this.loadProviders();
     void this.loadActiveModel();
     void this.loadTerminalCapabilities();
+    void this.watchUpdates();
 
     const redraw = () => this.redrawCanvases();
     window.addEventListener("resize", redraw);
@@ -370,6 +375,7 @@ class App {
     });
     this.refs.panelClose.addEventListener("click", () => this.togglePanel());
     this.refs.cmdk.addEventListener("click", () => this.palette.show());
+    this.refs.updatePill.addEventListener("click", () => void this.restartToUpdate());
     for (const button of document.querySelectorAll<HTMLElement>(".head-btn[data-panel]")) {
       button.addEventListener("click", () => this.togglePanel(button.dataset.panel as PanelTab));
     }
@@ -1275,6 +1281,68 @@ class App {
     this.refs.searchInput.placeholder = s.searchPlaceholder;
     this.refs.searchInput.setAttribute("aria-label", s.searchPlaceholder);
     this.renderPanelChrome();
+    this.renderUpdatePill();
+  }
+
+  /**
+   * The sidebar's "Update ready" button, in the installed app only.
+   *
+   * Polled from the local server rather than pushed: one small loopback
+   * request a minute, for a state that changes a few times a week. A push
+   * channel would be machinery for its own sake.
+   */
+  private async watchUpdates(): Promise<void> {
+    const refresh = async (): Promise<boolean> => {
+      try {
+        const response = await fetch("/v1/update");
+        // Not the installed app: there is nothing to watch, so stop asking.
+        if (!response.ok) return false;
+        this.updateState = (await response.json()) as UpdateStatus;
+      } catch {
+        return true; // transient; the next poll will tell
+      }
+      this.renderUpdatePill();
+      return true;
+    };
+    if (!(await refresh())) return;
+    window.setInterval(() => void refresh(), 60_000);
+    window.addEventListener("focus", () => void refresh());
+  }
+
+  private renderUpdatePill(): void {
+    const update = this.updateState;
+    const ready = update?.state === "ready";
+    this.refs.updatePill.hidden = !ready;
+    if (!ready || !update) return;
+    const s = this.s;
+    this.refs.updatePillText.textContent = `${s.updatePill} · ${update.available}`;
+    this.refs.updatePillAction.textContent = s.updatePillAction;
+    this.refs.updatePill.title = s.updateRestart;
+  }
+
+  private async restartToUpdate(): Promise<void> {
+    const status = this.store.get().status;
+    // Restarting ends the process, and a recording in progress would go with it.
+    if (status === "live" || status === "connecting") {
+      this.notify.error(this.s.updateStopRecording);
+      return;
+    }
+    try {
+      const response = await fetch("/v1/update/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relaunch: true }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { detail?: unknown };
+        this.notify.error(String(body.detail ?? response.status));
+        return;
+      }
+      this.refs.updatePill.disabled = true;
+      this.notify.info(this.s.updateApplying);
+    } catch {
+      this.notify.error(this.s.cannotConnect);
+    }
   }
 
   private renderTranscript(s: Strings): void {

@@ -3,6 +3,8 @@
     python packaging/build.py                 # full build
     python packaging/build.py --no-japanese   # smaller, character segmentation
     python packaging/build.py --installer     # also produce Setup.exe
+    python packaging/build.py --installer --version 0.1.30 --manifest
+                                              # a release: stamped, with latest.json
 
 Does four things a bare `pyinstaller` invocation does not:
 
@@ -35,6 +37,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +46,10 @@ DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 APP_DIR = DIST / "koe"
 APP_EXE = APP_DIR / "koe.exe"
+BUILD_INFO = PACKAGING / "build_info.json"
+MANIFEST = DIST / "latest.json"
+REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "jon-jc/koe-harness")
+VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")
 
 VERSION_FIELDS = [
     ("CompanyName", "jon-jc"),
@@ -136,14 +143,71 @@ def write_version_resource(version: str) -> None:
     (PACKAGING / "version_info.txt").write_text(content, encoding="utf-8")
 
 
-def sync_installer_version(version: str) -> None:
-    """Keep the Inno script's version in step with pyproject."""
-    path = PACKAGING / "koe.iss"
-    text = path.read_text(encoding="utf-8")
-    updated = re.sub(r'(#define AppVersion ")[^"]+(")', r"\g<1>" + version + r"\g<2>", text)
-    if updated != text:
-        path.write_text(updated, encoding="utf-8")
-        print(f"  synced installer version to {version}")
+def resolve_version(explicit: str | None) -> str:
+    """The version to stamp: explicit, then ``KOE_BUILD_VERSION``, then pyproject.
+
+    Releases are numbered per merge (see ``.github/workflows/release.yml``),
+    which pyproject cannot know, so CI passes the number in. A local build
+    keeps the pyproject version — lower than any release — so an installed
+    developer build is still offered the next published one.
+    """
+    version = explicit or os.environ.get("KOE_BUILD_VERSION") or project_version()
+    if not VERSION_PATTERN.fullmatch(version):
+        raise SystemExit(f"version {version!r} is not MAJOR.MINOR.PATCH")
+    return version
+
+
+def git_commit() -> str:
+    if os.environ.get("GITHUB_SHA"):
+        return os.environ["GITHUB_SHA"]
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def write_build_info(version: str) -> None:
+    """Stamp what this build is into the bundle, for the updater to compare.
+
+    Without it, every build would report the pyproject version, and an updater
+    comparing identical numbers can never tell a newer release from this one.
+    """
+    info = {
+        "version": version,
+        "commit": git_commit(),
+        "channel": os.environ.get("KOE_BUILD_CHANNEL", "local"),
+        "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    BUILD_INFO.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    print(f"  build info: {info['channel']} {version} {info['commit'][:7]}")
+
+
+def write_manifest(installer: Path, digest: str, version: str) -> Path:
+    """Write ``latest.json``: what installed copies read to find this release.
+
+    The URL is where the release workflow publishes the installer. The updater
+    refuses an installer URL that is not this repository's releases, so the
+    manifest cannot be pointed somewhere else without being rejected.
+    """
+    tag = f"v{version}"
+    manifest = {
+        "version": version,
+        "tag": tag,
+        "commit": git_commit(),
+        "published_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "notes_url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
+        "installer": {
+            "name": installer.name,
+            "url": f"https://github.com/{REPOSITORY}/releases/download/{tag}/{installer.name}",
+            "sha256": digest,
+            "size": installer.stat().st_size,
+        },
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return MANIFEST
 
 
 # --------------------------------------------------------------------------
@@ -285,8 +349,12 @@ def verify() -> None:
             process.kill()
 
 
-def build_installer() -> Path | None:
-    """Compile the Inno Setup installer, if the compiler is present."""
+def build_installer(version: str) -> Path | None:
+    """Compile the Inno Setup installer, if the compiler is present.
+
+    The version is passed as a define rather than written into ``koe.iss``, so
+    a release build does not leave the working tree modified.
+    """
     compiler = next((p for p in _inno_candidates() if p.exists()), None)
     if compiler is None:
         print(
@@ -295,9 +363,9 @@ def build_installer() -> Path | None:
             "  with --installer, or ship dist/koe as a portable folder."
         )
         return None
-    run([str(compiler), str(PACKAGING / "koe.iss")], cwd=ROOT)
-    produced = sorted(DIST.glob("koe-setup-*.exe"))
-    return produced[-1] if produced else None
+    run([str(compiler), f"/DAppVersion={version}", str(PACKAGING / "koe.iss")], cwd=ROOT)
+    produced = DIST / f"koe-setup-{version}.exe"
+    return produced if produced.exists() else None
 
 
 def write_checksum(target: Path) -> str:
@@ -331,6 +399,12 @@ def main() -> int:
     parser.add_argument("--skip-web", action="store_true", help="use the committed bundle")
     parser.add_argument("--skip-verify", action="store_true", help="do not launch the result")
     parser.add_argument("--clean", action="store_true", help="discard PyInstaller caches")
+    parser.add_argument(
+        "--version", help="version to stamp (default: KOE_BUILD_VERSION, pyproject)"
+    )
+    parser.add_argument(
+        "--manifest", action="store_true", help="also write dist/latest.json for the updater"
+    )
     args = parser.parse_args()
 
     if sys.platform != "win32":
@@ -338,10 +412,10 @@ def main() -> int:
 
     started = time.time()
 
-    version = project_version()
+    version = resolve_version(args.version)
     print(f"building koe {version}")
     write_version_resource(version)
-    sync_installer_version(version)
+    write_build_info(version)
 
     if not args.skip_web:
         build_web()
@@ -358,10 +432,15 @@ def main() -> int:
     print(f"  took   {time.time() - started:,.0f}s")
 
     if args.installer:
-        installer = build_installer()
+        installer = build_installer(version)
         if installer:
+            digest = write_checksum(installer)
             print(f"  setup  {installer}  ({installer.stat().st_size / 1024 / 1024:,.0f} MB)")
-            print(f"  sha256 {write_checksum(installer)}")
+            print(f"  sha256 {digest}")
+            if args.manifest:
+                print(f"  feed   {write_manifest(installer, digest, version)}")
+        elif args.manifest:
+            raise SystemExit("--manifest needs an installer, and none was built")
     print("=" * 66)
     return 0
 

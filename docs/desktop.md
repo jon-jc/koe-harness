@@ -24,11 +24,14 @@ Produces:
 | `dist/koe-setup-<version>.exe` | 47 MB |
 
 Flags: `--no-japanese` (drops MeCab, ~248 MB smaller), `--skip-web` (use the
-committed bundle), `--skip-verify`, `--clean`.
+committed bundle), `--skip-verify`, `--clean`. `--version X.Y.Z` stamps a
+release version into the bundle, and `--manifest` writes `dist/latest.json`,
+the file installed copies read to find a release (see [Updates](#updates)).
 
 CI builds this on `windows-latest` on every push and uploads the installer as
 an artifact, so the build is proven on a clean machine rather than only on the
-one it was written on.
+one it was written on. Every merge to `main` also publishes it as a release,
+which is what installed copies update from.
 
 ---
 
@@ -197,6 +200,50 @@ state exactly what Windows will show and what to click, and a `pip install`
 route exists for anyone who would rather not click through a security warning at
 all.
 
+## Updates
+
+Every merge to `main` publishes a release (`.github/workflows/release.yml`), and
+an installed koe keeps itself current from those releases.
+
+```
+merge to main
+  → release workflow: build, verify the frozen exe, compile the installer
+  → publish v0.1.<commits on main>: koe-setup-<v>.exe, SHA256SUMS.txt, latest.json
+
+installed koe (20 s after launch, then every 6 h)
+  → releases/latest → latest.json → newer than this build?
+  → download in the background, hashing as it streams
+  → SHA-256 and size must match latest.json, or the file is deleted
+  → "Update ready · Restart" appears in the sidebar
+  → on close, or Restart: the installer runs silently, waits for koe's PID
+    to exit, replaces the files, and (for Restart) starts koe again
+```
+
+| Decision | Why |
+|---|---|
+| **The version is the commit count** | Pull requests are squash-merged, so each merge adds exactly one commit: the number only rises, and it is reproducible from the repository without a counter stored anywhere |
+| **Verified while downloading, and again at launch** | The file sits in a user-writable directory between the check and the click, so the digest is re-checked immediately before the installer starts |
+| **Only this repository's release URLs** | `latest.json` names the digest but cannot redirect the download: an installer URL that is not `github.com/jon-jc/koe-harness/releases/download/<tag>/<installer>` is refused, as are `..`, query strings and percent-encoding |
+| **Installs on close, not mid-meeting** | The download is invisible; the restart is the person's choice or happens when they close the app anyway, and Restart is refused while a meeting is recording |
+| **The installer waits for koe to exit** | It is started with `/waitpid=<pid>`, so nothing is replaced while the old process still holds its files. Restart Manager (`CloseApplications`) is the backstop |
+| **Cross-origin requests are refused** | The update routes are on the loopback server, which any page in a real browser can reach; a request carrying a foreign `Origin` cannot start an install |
+| **Failure is a status, not a dialog** | No network, GitHub's rate limit, a bad digest: logged, shown in Settings → About, and retried at the next check |
+
+Turn it off in **Settings → About → Install updates automatically**. With it
+off, nothing is checked in the background; **Check now** still downloads and
+verifies, and the update installs only when you press **Restart to update**.
+
+`KOE_UPDATE_FEED` points an installed build at a different `latest.json` —
+HTTPS, or plain HTTP on loopback only — which is how an update is exercised
+before it is published. Headless mode (`KOE_DESKTOP_HEADLESS`) never checks in
+the background, so the packaging step and CI do not download releases while
+verifying a build.
+
+What it cannot do: a copy installed before this feature has no updater and has
+to be replaced by hand once. And the installer is still unsigned — the digest
+proves the file is the one the release workflow published, not who ran the
+workflow.
+
 ## Not done
 
 - **The binary is unsigned.** SmartScreen blocks a downloaded copy behind
@@ -206,8 +253,6 @@ all.
   convincingly, and pretending otherwise would be worse than saying so. What
   the project does instead is documented above: publish the hash, say what the
   warning means, and offer a route that avoids it.
-- **No auto-update.** The installer supports in-place upgrade (same `AppId`),
-  but nothing checks for new versions.
 - **Windows only.** The packaging is Windows-specific. The application code is
   not — `koe.desktop.paths` already resolves macOS and XDG locations — but no
   `.app` or `.AppImage` is produced.

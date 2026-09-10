@@ -621,6 +621,12 @@ nothing is stubbed for desktop, so the two builds cannot drift apart. To build
 the installer yourself: `python packaging/build.py --installer` produces a 47 MB
 `koe-setup-<version>.exe` and the matching SHA-256.
 
+**It keeps itself up to date.** Every merge to `main` publishes a release, and
+an installed copy notices it, downloads it in the background, checks it
+against the published SHA-256, and installs it when you close koe — or at once
+from **Update ready · Restart** in the sidebar. A download that fails the check
+is deleted, never run. See [docs/desktop.md](docs/desktop.md#updates).
+
 Requires Windows 10/11 x64 and the Edge WebView2 runtime, which ships with
 Windows 11 and updated Windows 10. The installer checks for it and says where to
 get it rather than leaving you with a blank window.

@@ -70,6 +70,10 @@ class DesktopSettings:
     #: silently recording meetings to disk is not a decision to make on a
     #: user's behalf.
     save_meetings: bool = False
+    #: Download new releases in the background and install them as the app
+    #: closes. On by default — a desktop tool weeks behind its own fixes is the
+    #: usual way one rots — and one switch away in Settings → About.
+    auto_update: bool = True
 
     @classmethod
     def path(cls) -> Path:

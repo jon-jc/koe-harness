@@ -79,3 +79,6 @@ web/node_modules/
 # toolchain, and CI verifies it matches the sources.
 !web/dist/
 !web/dist/app.js
+
+# Stamped per build by packaging/build.py
+packaging/build_info.json

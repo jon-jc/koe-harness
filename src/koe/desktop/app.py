@@ -33,8 +33,11 @@ from typing import Any
 from koe.desktop import paths
 from koe.desktop.console import ensure_console
 from koe.desktop.instance import AlreadyRunning, InstanceLock
+from koe.desktop.jobs import bind_children_to_this_process
 from koe.desktop.server import EmbeddedServer
 from koe.desktop.settings import DesktopSettings, WindowState
+from koe.desktop.update_api import build_update_router
+from koe.desktop.updater import Updater
 
 logger = logging.getLogger("koe.desktop")
 
@@ -220,17 +223,46 @@ class DesktopApp:
         self.settings = DesktopSettings.load()
         self.server: EmbeddedServer | None = None
         self.window: Any = None
+        self.updater: Updater | None = None
+        #: Set when the app should leave so a waiting installer can proceed.
+        self._exit = threading.Event()
 
     def run(self) -> int:
         from koe.api.app import create_app
 
         services = build_services()
-        self.server = EmbeddedServer(create_app(services))
+        app = create_app(services)
+        # Mounted here rather than in the API module: only an installed desktop
+        # app can replace itself, and a server deployment should not even have
+        # the routes.
+        self.updater = Updater(auto=self.settings.auto_update)
+        app.include_router(
+            build_update_router(
+                self.updater,
+                on_apply=self._exit_for_update,
+                on_auto_changed=self._remember_auto_update,
+            )
+        )
+        self.server = EmbeddedServer(app)
         self.server.start()
         logger.info("embedded server ready", extra={"url": self.server.url})
+        status = self.updater.snapshot()
+        logger.info(
+            "updater",
+            extra={
+                "update_state": status.state,
+                "build_version": status.current,
+                "build_channel": status.channel,
+            },
+        )
 
         if os.environ.get("KOE_DESKTOP_HEADLESS"):
+            # No background checks headless: that is the packaging step and CI
+            # verifying a build, and neither should be downloading releases.
+            # The routes still answer, so an update can be exercised on purpose.
             return self._run_headless()
+
+        self.updater.start()
 
         import webview
 
@@ -280,11 +312,13 @@ class DesktopApp:
 
         logger.info("running headless", extra={"url": self.server.url})
         try:
-            while self.server.running:
+            while self.server.running and not self._exit.is_set():
                 time.sleep(0.2)
         except KeyboardInterrupt:
             pass
         finally:
+            if self.updater is not None:
+                self.updater.stop()
             self.server.stop()
         return 0
 
@@ -348,15 +382,39 @@ class DesktopApp:
     def _on_closing(self) -> bool:
         logger.info("window closing")
         self.settings.save()
+        if self.updater is not None:
+            # A ready update installs as the app closes: the person is done,
+            # and their next launch is simply the new version.
+            self.updater.apply_on_exit()
+            self.updater.stop()
         if self.server is not None:
             self.server.stop()
         return True
+
+    # -- updates -------------------------------------------------------------
+
+    def _exit_for_update(self) -> None:
+        """Leave, so the installer waiting on this process can replace it."""
+        logger.info("exiting for update")
+        self._exit.set()
+        if self.window is not None:
+            try:
+                self.window.destroy()
+            except Exception as exc:  # noqa: BLE001 - leaving must not fail on a window error
+                logger.warning("window did not close cleanly: %s", exc)
+
+    def _remember_auto_update(self, enabled: bool) -> None:
+        self.settings.auto_update = enabled
+        self.settings.save()
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the desktop application."""
     configure_desktop_logging(os.environ.get("KOE_LOG_LEVEL", "INFO"))
     install_crash_handler()
+    # Before anything starts a child. A terminal's console host and shell must
+    # not outlive the app however it exits; see koe.desktop.jobs.
+    bind_children_to_this_process()
 
     from koe import __version__
 

@@ -39,6 +39,12 @@ datas += [
     (str(ROOT / "web" / "dist"), "web/dist"),
 ]
 
+# What this build is — version, commit, channel — for the updater to compare
+# against published releases. Written by build.py; without it (running this
+# spec directly) the app reports the package version.
+if (ROOT / "packaging" / "build_info.json").exists():
+    datas += [(str(ROOT / "packaging" / "build_info.json"), ".")]
+
 # The bundled evaluation corpus, so `Play demo` works offline.
 if (ROOT / "datasets").is_dir():
     datas += [(str(ROOT / "datasets"), "datasets")]
@@ -110,6 +116,10 @@ a = Analysis(
         "PIL",
         "setuptools",
         "pip",
+        # A type checker, reached through pydantic's optional mypy plugin. It is
+        # a development tool and has no business in an application bundle.
+        "mypy",
+        "pydantic.mypy",
     ],
     noarchive=False,
 )
