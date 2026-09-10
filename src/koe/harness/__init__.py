@@ -45,6 +45,7 @@ from koe.harness.agent import (
     TurnOutcome,
     TurnReason,
 )
+from koe.harness.compaction import CompactionResult, Compactor, ModelSummarizer
 from koe.harness.inbox import NEXT_STEP, NEXT_TURN, Inbox, InboxTarget, Pending
 from koe.harness.scheduler import (
     DEFAULT_MAX_PARALLEL,
@@ -53,6 +54,7 @@ from koe.harness.scheduler import (
     parse_arguments,
 )
 from koe.harness.session import Session, SessionEvent
+from koe.harness.tokens import Measurement, TokenMeter, estimate_text
 
 __all__ = [
     "DEFAULT_MAX_PARALLEL",
@@ -61,15 +63,21 @@ __all__ = [
     "NEXT_TURN",
     "AgentHandle",
     "AgentRegistry",
+    "CompactionResult",
+    "Compactor",
     "HarnessAgent",
     "Inbox",
     "InboxTarget",
+    "Measurement",
+    "ModelSummarizer",
     "Pending",
     "Session",
     "SessionEvent",
+    "TokenMeter",
     "ToolBatch",
     "TurnOutcome",
     "TurnReason",
+    "estimate_text",
     "execute_tool_calls",
     "parse_arguments",
 ]
