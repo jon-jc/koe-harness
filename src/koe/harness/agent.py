@@ -45,8 +45,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from koe.agent.loop import Adapter, ToolCall
+from koe.harness.commands import CommandRegistry, CommandResult, builtin_commands
 from koe.harness.compaction import Compactor, ModelSummarizer
 from koe.harness.inbox import NEXT_STEP, NEXT_TURN, Inbox, InboxTarget, Pending
+from koe.harness.prompt import SystemPrompt
 from koe.harness.scheduler import (
     DEFAULT_MAX_PARALLEL,
     execute_tool_calls,
@@ -122,6 +124,8 @@ class HarnessAgent:
         owner: str = "chat",
         on_event: Listener | None = None,
         compactor: Compactor | None = None,
+        prompt: SystemPrompt | None = None,
+        commands: CommandRegistry | None = None,
     ) -> None:
         self.id = f"a_{uuid.uuid4().hex[:12]}"
         self.adapter = adapter
@@ -136,6 +140,11 @@ class HarnessAgent:
         #: so a deployment can retune the thresholds, or swap the estimator
         #: for a real tokenizer, without touching the loop.
         self.compactor = compactor or Compactor()
+        #: Assembled per request from whatever is mounted, so the prompt
+        #: describes the harness that exists rather than the one someone
+        #: wrote about once.
+        self.prompt = prompt
+        self.commands = commands or builtin_commands()
 
         self._phase: Literal["idle", "running"] = "idle"
         self._turn = 0
@@ -315,9 +324,7 @@ class HarnessAgent:
         history = self.session.derive_messages()
         self._log_header(turn, step, schemas)
 
-        reply = await self.adapter.reply(
-            history, system=self.session.system_prompt(), tools=schemas
-        )
+        reply = await self.adapter.reply(history, system=self._system_text(), tools=schemas)
         outcome.input_tokens += reply.input_tokens
         outcome.output_tokens += reply.output_tokens
 
@@ -384,6 +391,36 @@ class HarnessAgent:
             outcome.reason = "concluded"
             return False
         return not batch.aborted
+
+    def _system_text(self) -> str:
+        """The prompt for this request.
+
+        Assembled from the mounted sections when a registry is present, so
+        turning a plugin off takes its instructions with it. Falls back to the
+        session's own prompt otherwise, which is what a session created without
+        a registry -- a test, a script -- should get.
+
+        An assembly failure falls back rather than ending the turn: a prompt
+        that is merely stale still answers the question, and a turn that dies
+        because a section could not resolve a variable answers nothing.
+        """
+        if self.prompt is None:
+            return self.session.system_prompt()
+        try:
+            return self.prompt.render()
+        except Exception:
+            logger.exception("agent %s: prompt assembly failed", self.id)
+            return self.session.system_prompt()
+
+    async def command(self, text: str) -> CommandResult | None:
+        """Run `text` as a slash command, or None when it is not one.
+
+        Commands never reach the inbox: they are instructions to the harness,
+        not things the user said to the model, and letting one into history
+        would have the model reading `/compact` as a request to talk about
+        compacting.
+        """
+        return await self.commands.dispatch(self, text)
 
     async def _relieve_pressure(self, turn: int, step: int, schemas: list[dict[str, Any]]) -> None:
         """Compact if the surface has grown into the context window.

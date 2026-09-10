@@ -43,6 +43,7 @@ from koe.config import Settings, get_settings
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Segment, Transcript, attribute_speakers
 from koe.harness import AgentRegistry, HarnessAgent
+from koe.harness.prompt import SystemPrompt
 from koe.kernel.context import Context
 from koe.minutes.demo import demo_llm
 from koe.minutes.generator import MinutesGenerator
@@ -111,6 +112,10 @@ class Services:
     plugins: PluginManager = field(init=False, repr=False)
     #: Live harness agents. One per chat socket, disposed with it.
     agents: AgentRegistry = field(default_factory=AgentRegistry, init=False, repr=False)
+    #: The prompt, assembled from whatever is mounted. Plugins contribute
+    #: the instructions for the tools they add, so the prompt describes the
+    #: harness that exists.
+    prompt: SystemPrompt = field(default_factory=SystemPrompt, init=False, repr=False)
     #: The local backends most recently resolved, each with the sentence
     #: explaining the outcome. Cached rather than re-probed, so a credential
     #: change re-runs the policy without sweeping five ports again.
@@ -146,6 +151,8 @@ class Services:
         """
         self.tools = ToolRegistry(self.ctx)
         self.ctx.provide("tools", self.tools, replace=True)
+        self.ctx.provide("prompt", self.prompt, replace=True)
+        self._mount_prompt()
         self.ctx.provide("workspace", self.workspace, replace=True)
 
         from koe.desktop.paths import config_dir, data_dir
@@ -209,6 +216,46 @@ class Services:
         )
         self.plugins.discover()
         self.plugins.activate_all()
+
+    def _mount_prompt(self) -> None:
+        """The sections koe always has, and the variables they reference.
+
+        Tool-specific instructions belong to the plugins that register the
+        tools -- `workspace_tools` contributes the section describing them --
+        so turning a plugin off removes both the tool and the paragraph telling
+        the model to use it.
+        """
+        self.prompt.section(
+            "koe:identity",
+            "You are the assistant inside koe, a bilingual (Japanese and English) "
+            "voice AI harness that records meetings, transcribes them with speaker "
+            "labels, and generates verified 議事録.",
+            order="IDENTITY",
+        )
+        self.prompt.section(
+            "koe:language",
+            "Answer in the language the user writes in. Be concise and concrete. "
+            "When you have used a tool, say what you found rather than narrating "
+            "that you used it.",
+            order="LANGUAGE",
+        )
+        self.prompt.section(
+            "koe:tools",
+            # Dynamic: it names the tools that are actually mounted right now,
+            # so a disabled plugin stops being advertised without anyone having
+            # to remember to edit this.
+            lambda: (
+                (
+                    "Tools available to you: "
+                    + ", ".join(sorted(spec.name for spec in self.tools))
+                    + ". Prefer using a tool over guessing: if a question is about the "
+                    "code or the meeting, look."
+                )
+                if len(self.tools)
+                else "You have no tools in this session; answer from the conversation alone."
+            ),
+            order="TOOL_WORKSPACE",
+        )
 
     def refresh_llm(self) -> str:
         """Point the LLM service at whichever backend should be serving.
@@ -1172,6 +1219,7 @@ async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
             adapter_for(services.llm),
             services.tools,
             system=DEFAULT_SYSTEM,
+            prompt=services.prompt,
             on_event=emit,
         )
         return services.agents.create(agent)
@@ -1186,6 +1234,10 @@ async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
                     # still wants the things they queued behind it.
                     handle.agent.cancel("user", keep_inbox=True)
                     await emit("cancelled", {"agent": handle.agent.id})
+                continue
+
+            if handle is not None and frame.get("commands"):
+                await emit("commands", {"commands": handle.agent.commands.describe()})
                 continue
 
             if handle is not None and frame.get("sync") is not None:
@@ -1222,6 +1274,14 @@ async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
                 # Re-resolved per message, so a key pasted mid-conversation
                 # takes effect on the next turn rather than after a restart.
                 handle.agent.adapter = adapter_for(services.llm)
+
+            # A slash command is an instruction to the harness, not something
+            # the user said to the model, so it runs instead of a turn and
+            # never reaches the inbox.
+            outcome = await handle.agent.command(steer or text)
+            if outcome is not None:
+                await emit("command", outcome.to_dict())
+                continue
 
             if steer:
                 handle.agent.steer(steer)

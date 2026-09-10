@@ -155,9 +155,10 @@ export class ChatPanel {
     // tool calls into the wrong file needs telling now, and cancelling to
     // re-prompt throws away the work it has already done.
     const steering = this.busy;
+    const isCommand = /^\/[a-zA-Z][\w-]*(\s|$)/.test(text);
     this.append(steering ? "steer" : "user", text);
 
-    if (!steering) {
+    if (!steering && !isCommand) {
       this.setBusy(true);
       this.status.textContent = this.strings.chatThinking;
       this.turn = null;
@@ -222,6 +223,21 @@ export class ChatPanel {
       case "steered":
         this.status.textContent = this.strings.chatSteered;
         break;
+
+      case "command": {
+        // A command answers the user, not the model, so it is rendered as a
+        // harness notice rather than as an assistant message — a transcript
+        // that shows "/context" being answered by the assistant is a
+        // transcript of something that did not happen.
+        const node = h("div", { class: `msg command${frame.ok ? "" : " bad"}` });
+        node.append(h("div", { class: "msg-body", text: String(frame.text ?? "") }));
+        this.log.append(node);
+        this.scroll();
+        if (frame.reload) this.calls.clear();
+        this.setBusy(false);
+        this.status.textContent = "";
+        break;
+      }
 
       case "cancelled":
         this.notify.info(this.strings.chatStopped);
