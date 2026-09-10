@@ -71,6 +71,7 @@ addopts = "-q --strict-markers"
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
   "requires_keys: needs live provider credentials",
+  "real_user_paths: reads the real per-user directories rather than the test sandbox",
 ]
 
 [tool.ruff]

@@ -9,7 +9,7 @@
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![892 tests](https://img.shields.io/badge/tests-892-brightgreen)
+![917 tests](https://img.shields.io/badge/tests-917-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -232,6 +232,31 @@ koe vad-bench          # 8つの条件で評価。対照列つき
 失敗時のメッセージは「会話がどうなったか」を伝えます。変更なし・変更あり・ログに
 記録済みのいずれかです。「うまくいきませんでした」だけでは、会話が無事かどうかを
 判断する人の役に立たないからです。
+
+
+**構成は宣言的です。** これまでプラグインは Python コード内でマウントされていたため、
+「ターミナルなしの koe」や「小さいウィンドウ向けに圧縮を調整した koe」を作るには
+フォークが必要でした。プロファイルは順序付きの行リストであり、パッチ層は行を **id で
+指定**し、最後の書き込みが優先されます。koe が基本構成を提供し、デプロイ側がパッチを
+追加し、利用者がさらに追加する。どの層も他の層の内容を知る必要はありません。
+
+```toml
+# ~/.config/koe/profile.toml
+[[plugins]]
+id = "terminal"
+disabled = true
+
+[[plugins]]
+id = "user-vocabulary"
+[plugins.config]
+path = "/etc/koe/vocabulary.txt"
+```
+
+パッチは行の `config` 全体を置き換えます。マージしないのは、1つのフィールドだけを
+設定した利用者が、見えない層から他のすべてのフィールドを継承してしまい、実効設定が
+「誰も書いていない計算結果」になるからです。また、このビルドに存在しないプラグインを
+指す行は致命的エラーではなく**報告**されます。追加プラグイン込みの koe 向けに書かれた
+プロファイルでも、手元の koe はそのプラグイン抜きで起動すべきだからです。
 
 ### ローカルモデルで完結させる
 

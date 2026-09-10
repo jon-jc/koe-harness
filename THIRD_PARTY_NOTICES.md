@@ -129,6 +129,7 @@ registry and providers.
 | `harness/compaction.py` | `compaction/`, `compaction-basic/`, `compaction-tool-result-pruner/` | Shadowing rather than deleting, replacements landing at the position they replace, tool-pairing balance as the legality rule for a cut, the retain-tail region selection, the start/summary/replacement/end bracket, and the model-free tool-result pruner |
 | `harness/prompt.py` | `core/system-prompt` | Named, centrally ordered prompt sections contributed as disposable effects; deterministic name tie-break; `complete` sections; refusing assembly on an unresolved variable |
 | `harness/commands.py` | the command seam and `compaction/command-compact` | Commands running instead of turns, and outcomes that say what happened *to the conversation* rather than that something failed |
+| `harness/profile.py` | `boot/app-boot`, `bundle/` | A composition as ordered plugin rows; patch layers addressing rows by id with last-write-wins; config replaced rather than merged; a row naming an absent plugin reported rather than fatal. TOML rather than dsh's YAML, because `tomllib` is stdlib and koe already configures itself in TOML |
 | `harness/tokens.py` | `token-meter` (seam only) | The idea of a replaceable metering seam. The bilingual estimator is koe's own — dsh's implementation is not in the public tree |
 
 The event names are dsh's spelling on purpose. Inventing koe's own would have

@@ -9,7 +9,7 @@ English · [日本語](README.ja.md)
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![892 tests](https://img.shields.io/badge/tests-892-brightgreen)
+![917 tests](https://img.shields.io/badge/tests-917-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -194,6 +194,32 @@ compaction.
 Failure messages say what happened *to the conversation* — unchanged, changed,
 or recorded in the log — because "it didn't work" is useless to someone deciding
 whether their conversation is intact.
+
+
+**The composition is declarative.** Plugins were mounted in Python, so a koe
+without the terminal, or with compaction tuned for a smaller window, was a fork.
+A profile is an ordered list of rows, and patch layers address rows *by id* with
+last-write-wins — koe ships a base, a deployment adds a patch, a user adds
+another, and none of them has to know what the others contain.
+
+```toml
+# ~/.config/koe/profile.toml
+[[plugins]]
+id = "terminal"
+disabled = true
+
+[[plugins]]
+id = "user-vocabulary"
+[plugins.config]
+path = "/etc/koe/vocabulary.txt"
+```
+
+A patch replaces a row's whole `config` rather than merging into it. Merging
+means someone who sets one field inherits every other field from a layer they
+cannot see, so the effective configuration is a computation nobody has written
+down. And a row naming a plugin this build does not have is *reported*, not
+fatal: a profile written for a koe with an extra plugin should still start the
+koe you have, minus that plugin.
 
 ### Running entirely on your own machine
 
@@ -610,7 +636,7 @@ deploy/          Dockerfile, compose, Terraform (ECS Fargate)
 
 ## Testing and CI
 
-892 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
+917 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
 
 CI runs eight jobs on every push:
 
