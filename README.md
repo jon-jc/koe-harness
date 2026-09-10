@@ -533,39 +533,38 @@ it leaves the browser — ~6× less uplink than 48 kHz float, and off the main
 thread so a UI repaint cannot drop input frames. Committed text renders normally
 while the tail the model has not settled on is greyed.
 
-#### The workbench
+#### The workspace
 
-The client is laid out like an editor — Cursor, Codex, VS Code — rather than as
-pages, because its panels are views onto one session, not alternatives to each
-other. Asking the agent about a transcript should not mean navigating away from
-the transcript.
+The client is laid out after Claude Code: sessions on the left, the conversation
+as the page, and a side panel for what the conversation is about.
 
 | Region | Holds |
 |---|---|
-| Activity rail | Session · Explorer · Outline · Harness — what the sidebar shows |
-| Centre tabs | The transcript, 議事録 / routing / metrics, and the code viewer |
-| Bottom panel | A real terminal (pty), or the plain text the agent sees |
-| Agent panel | The harness, always open on the right |
-| Status bar | Recording state, context-window pressure, cost, model |
+| Sidebar | New session, record a meeting, and every session with what it is doing |
+| Conversation | Your messages, the agent's answers, and each tool call as a row |
+| Side panel | The transcript, 議事録 / routing / metrics, the code viewer, a real terminal |
 
-The agent transcript follows Claude Code: one column with a glyph gutter rather
-than chat bubbles. `>` is you and `⏺` is the agent; on a tool call the dot's
-colour is the call's state — amber running, green returned, red failed — with the
-result hung underneath on `⎿` and previewed to three lines. While a turn runs, a
-working line shows elapsed time and step, typing *steers* the turn at its next
-step boundary, and Esc interrupts. `/` opens command completion.
+Each session has its own agent, so a long turn in one keeps running while you
+start another; the sidebar shows it working and marks it when it finishes. Tool
+calls read as actions — "Read README.md", "Ran npm test" — with a status icon, a
+duration, and the output one click away. While a turn runs, typing *steers* it at
+the next step boundary and the send button becomes stop; Esc interrupts, and `/`
+opens command completion. The ring beside the model name is the context window:
+click it for the harness's numbers and a compact-now button.
 
 | Keys | Does |
 |---|---|
 | `Ctrl+K` | Command palette — matches Japanese and English labels alike |
-| `Ctrl+B` / `Ctrl+J` | Toggle the sidebar / the terminal panel |
-| `Ctrl+L` | Focus the agent, quoting any selected transcript text |
-| `Ctrl+Shift+L` | Toggle the agent panel |
-| `Ctrl+1…3` | Switch centre tabs |
+| `Ctrl+Shift+O` | New session (`Ctrl+Shift+[` / `]` to move between them) |
+| `Ctrl+L` | Focus the composer, quoting any text selected in the side panel |
+| `Ctrl+B` / `Ctrl+J` | Toggle the sidebar / the side panel |
+| `Ctrl+1…4` | Transcript, minutes, code, terminal |
 | `Space` | Start or stop recording |
 
 Drag a splitter to resize a region (or focus it and use the arrow keys);
-double-click it to reset. The layout persists across reloads.
+double-click it to reset. The layout persists across reloads. Sessions last as
+long as the page, because the server's agent goes with its connection — a list
+that outlived it would look like memory the model no longer has.
 
 #### Listening to a call, not just a room
 

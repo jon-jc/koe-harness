@@ -112,6 +112,17 @@ export class CommandPalette {
       }
     });
 
+    // Escape closes it explicitly, not only natively: a <dialog>'s built-in
+    // Escape handling is skipped by some embedded webviews and synthesized
+    // input, and a modal that cannot be dismissed from the keyboard traps
+    // whoever opened it.
+    this.dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        this.dialog.close();
+      }
+    });
+
     // Clicking the backdrop closes it. A palette is a transient thing and
     // trapping someone in it because they clicked past it is hostile.
     this.dialog.addEventListener("click", (event) => {

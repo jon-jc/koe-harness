@@ -1,37 +1,34 @@
 /**
- * The agent panel.
+ * One session's conversation.
  *
- * Shaped like Claude Code's transcript rather than like a messaging app, and
- * the reason is what an agent's output *is*. A chat app is built for two
- * people taking turns; bubbles, alignment and avatars all say "who spoke".
- * An agent turn is mostly not speech — it is a sequence of actions with a
- * little prose between them — and the question a reader has is "what did it
- * do, in what order, and did it work". So:
+ * Laid out after Claude Code's desktop app, because what an agent produces is
+ * not a chat. A messaging layout is built for two people taking turns; an
+ * agent turn is mostly *actions* with a little prose between them, and the
+ * reader's question is "what did it do, and did it work". So:
  *
- *   - **One column, one marker per entry.** `>` is you, `⏺` is the agent.
- *     A tool call is a `⏺` whose colour is its state — amber while running,
- *     green when it returned, red when it failed — so a failed call is
- *     findable by colour from across the room.
- *   - **Results hang under their call** with `⎿`, previewed to three lines.
- *     The full output is one click away; forty lines of `ls` inline would bury
- *     the answer it was gathered for.
- *   - **A working line, not a spinner.** Elapsed time and step number, because
- *     a turn doing six model calls and a turn waiting on one slow one look
- *     identical behind a spinner, and they call for different patience.
- *   - **The composer steers.** While a turn runs, what you type joins it at
- *     the next step boundary instead of waiting behind it — the harness inbox,
- *     made reachable. Esc interrupts, as it does in every terminal agent.
- *
- * The panel owns the socket and nothing else. What the app shows elsewhere —
- * the context gauge in the status bar, the harness sidebar — it learns
- * through `ChatEvents`, so the panel never reaches into the page around it.
+ *   - **The conversation is the page.** A centred reading column: your
+ *     messages in a bubble on the right, the agent's answers as plain prose.
+ *     No avatars — there are only ever two parties, and both are obvious.
+ *   - **Tool calls are rows, not prose.** "Read README.md", "Ran npm test":
+ *     a status icon, a verb, a target, a duration, and the output one click
+ *     away. The calls of one step share a card, so a burst of reads reads as
+ *     one burst.
+ *   - **While it works, a working line.** Elapsed time and step number,
+ *     because a turn doing six model calls and a turn waiting on one slow one
+ *     look identical behind a spinner, and they call for different patience.
+ *   - **The composer steers.** Typing while a turn runs joins it at the next
+ *     step boundary instead of queueing behind it, and an empty composer's
+ *     send button becomes stop. Esc interrupts.
+ *   - **Context is a ring beside the model.** The number that explains both
+ *     "why did it forget that" and "why is this costing so much", where you
+ *     are already looking when you notice either.
  */
 
 import { copyText, h } from "../dom";
 import type { Strings } from "../i18n";
+import { icon, type IconName } from "../icons";
 import { renderMarkdown } from "../markdown";
-import type { AgentActivity, SlashCommand } from "../state";
-import { IDLE_AGENT } from "../state";
+import { IDLE_AGENT, type AgentActivity, type SlashCommand } from "../state";
 import type { Notifications } from "../toast";
 
 export interface ContextGauge {
@@ -41,41 +38,57 @@ export interface ContextGauge {
 }
 
 export interface ChatEvents {
-  onContext?: (gauge: ContextGauge) => void;
   onActivity?: (activity: AgentActivity) => void;
-  onCommands?: (commands: readonly SlashCommand[]) => void;
+  onTitle?: (title: string) => void;
+  onModelClick?: () => void;
 }
 
 interface ToolView {
   row: HTMLElement;
-  meta: HTMLElement;
-  result: HTMLElement;
-  name: string;
+  head: HTMLElement;
+  status: HTMLElement;
+  time: HTMLElement;
+  body: HTMLElement;
+  output: HTMLElement;
+  verb: string;
 }
 
-/** Claude Code's glyph cycle. Ping-ponged, so it breathes rather than ticks. */
-const SPINNER = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
-const PREVIEW_LINES = 3;
 const HISTORY_LIMIT = 50;
+const SVG = "http://www.w3.org/2000/svg";
+/** Circumference of the context ring (r = 7). */
+const RING = 2 * Math.PI * 7;
 
 export class ChatPanel {
   private socket: WebSocket | null = null;
-  private readonly log: HTMLElement;
+  private readonly root: HTMLElement;
+  private readonly scroller: HTMLElement;
+  private readonly column: HTMLElement;
   private readonly working: HTMLElement;
-  private readonly glyph: HTMLElement;
   private readonly workingText: HTMLElement;
   private readonly workingMeta: HTMLElement;
-  private readonly box: HTMLElement;
+  private readonly greeting: HTMLElement;
+  private readonly suggestions: HTMLElement;
+  private readonly composer: HTMLElement;
   private readonly input: HTMLTextAreaElement;
   private readonly menu: HTMLElement;
-  private readonly hintLeft: HTMLElement;
-  private readonly hintRight: HTMLElement;
+  private readonly pop: HTMLElement;
+  private readonly sendButton: HTMLButtonElement;
+  private readonly ring: HTMLButtonElement;
+  private readonly ringArc: SVGCircleElement;
+  private readonly modelChip: HTMLButtonElement;
+  private readonly steerHint: HTMLElement;
+  private readonly foot: HTMLElement;
 
   private activity: AgentActivity = IDLE_AGENT;
+  private gaugeState: ContextGauge = { total: 0, window: 0, pressure: 0 };
+  private adapter = "";
+  private fallbackModel = "";
+  private title = "";
   private turnStarted = 0;
   private ticker = 0;
-  private frame = 0;
+  private toolGroup: HTMLElement | null = null;
   private runningTool = "";
+  private sendMode: "send" | "stop" | "" = "";
   private readonly calls = new Map<string, ToolView>();
 
   private commands: readonly SlashCommand[] = [];
@@ -84,55 +97,106 @@ export class ChatPanel {
 
   private readonly history: string[] = [];
   private historyAt = -1;
-  private readonly still = window.matchMedia("(prefers-reduced-motion: reduce)");
+  private hadConversation = false;
+  private disposed = false;
+  /** Whether the reader was at the bottom, measured before anything is added. */
+  private pinned = true;
+
+  /**
+   * Closes the popovers when a press lands anywhere else on the page.
+   *
+   * On the document rather than this panel: a listener on the panel never
+   * heard a click in the side panel, so the context card stayed open over the
+   * conversation while someone started recording beside it.
+   */
+  private readonly onOutside = (event: PointerEvent): void => {
+    const target = event.target as Node;
+    if (!this.pop.hidden && !this.pop.contains(target) && !this.ring.contains(target)) {
+      this.pop.hidden = true;
+    }
+    if (!this.menu.hidden && !this.composer.contains(target)) this.menu.hidden = true;
+  };
 
   constructor(
-    private readonly host: HTMLElement,
+    host: HTMLElement,
     private strings: Strings,
     private readonly notify: Notifications,
     private readonly events: ChatEvents = {},
   ) {
-    this.log = h("div", { class: "cc-log", role: "log", "aria-live": "polite" });
+    this.column = h("div", { class: "chat-column", role: "log", "aria-live": "polite" });
+    this.scroller = h("div", { class: "chat-scroll" }, this.column);
 
-    this.glyph = h("span", { class: "cc-glyph", "aria-hidden": "true", text: "✻" });
-    this.workingText = h("span", { class: "cc-working-text" });
-    this.workingMeta = h("span", { class: "cc-working-meta" });
-    this.working = h("div", { class: "cc-working", role: "status" }, this.glyph, this.workingText, this.workingMeta);
-    this.working.hidden = true;
-
-    this.input = h("textarea", {
-      class: "cc-input",
-      rows: "1",
-      spellcheck: "false",
-      "aria-label": strings.chatPlaceholder,
-      placeholder: strings.chatPlaceholder,
-    });
-    this.menu = h("div", { class: "cc-menu", role: "listbox" });
-    this.menu.hidden = true;
-    this.box = h(
+    this.workingText = h("span", { class: "shimmer" });
+    this.workingMeta = h("span", { class: "working-meta" });
+    this.working = h(
       "div",
-      { class: "cc-box" },
-      h("span", { class: "cc-prompt", "aria-hidden": "true", text: ">" }),
-      this.input,
+      { class: "working", role: "status" },
+      h("span", { class: "spark" }, icon("spark", 16)),
+      this.workingText,
+      this.workingMeta,
     );
-    this.hintLeft = h("span", { class: "cc-hint" });
-    this.hintRight = h("span", { class: "cc-hint mono" });
+    this.working.hidden = true;
+    this.column.append(this.working);
 
-    this.host.append(
-      this.log,
-      this.working,
+    this.greeting = h("div", { class: "greeting" });
+    this.suggestions = h("div", { class: "suggestions" });
+
+    this.input = h("textarea", { class: "composer-input", rows: "1", spellcheck: "false" });
+    this.menu = h("div", { class: "cmenu", role: "listbox" });
+    this.menu.hidden = true;
+    this.pop = h("div", { class: "ctx-pop", role: "dialog" });
+    this.pop.hidden = true;
+
+    const slash = h("button", { class: "cbtn", type: "button" }, icon("slash", 16));
+    slash.addEventListener("click", () => this.insert("/"));
+    slash.dataset.role = "commands";
+
+    this.steerHint = h("span", { class: "steer-hint" });
+    this.steerHint.hidden = true;
+
+    const ring = ringSvg();
+    this.ringArc = ring.arc;
+    this.ring = h("button", { class: "ctx-ring", type: "button" });
+    this.ring.append(ring.svg);
+    this.ring.hidden = true;
+
+    this.modelChip = h("button", { class: "model-chip", type: "button" });
+    this.sendButton = h("button", { class: "send", type: "button" });
+
+    this.composer = h(
+      "div",
+      { class: "composer" },
+      this.menu,
+      this.pop,
+      this.input,
       h(
         "div",
-        { class: "cc-compose" },
-        this.menu,
-        this.box,
-        h("div", { class: "cc-hints" }, this.hintLeft, h("span", { class: "grow" }), this.hintRight),
+        { class: "composer-bar" },
+        slash,
+        this.steerHint,
+        h("span", { class: "grow" }),
+        this.ring,
+        this.modelChip,
+        this.sendButton,
       ),
     );
+    this.foot = h("p", { class: "composer-foot" });
+
+    this.root = h(
+      "div",
+      { class: "chat is-empty" },
+      this.scroller,
+      h(
+        "div",
+        { class: "chat-dock" },
+        h("div", { class: "dock-column" }, this.greeting, this.composer, this.foot, this.suggestions),
+      ),
+    );
+    host.append(this.root);
 
     this.bind();
-    this.renderWelcome();
-    this.renderHints();
+    this.renderGreeting();
+    this.renderComposer();
     // Opened at once: the server answers the command list before any
     // conversation exists, so completion works for the first thing typed.
     this.connect();
@@ -142,10 +206,17 @@ export class ChatPanel {
 
   setStrings(strings: Strings): void {
     this.strings = strings;
-    this.input.setAttribute("aria-label", strings.chatPlaceholder);
-    this.renderHints();
-    if (this.log.querySelector(".cc-welcome")) this.renderWelcome();
+    this.renderGreeting();
+    this.renderComposer();
+    if (!this.pop.hidden) this.renderPop();
     if (this.activity.busy) this.tick();
+  }
+
+  /** The app's idea of the model, until the server names the one it used. */
+  setModel(name: string): void {
+    if (name === this.fallbackModel) return;
+    this.fallbackModel = name;
+    this.renderComposer();
   }
 
   focus(): void {
@@ -165,8 +236,8 @@ export class ChatPanel {
       .map((line) => `> ${line}`)
       .join("\n");
     const current = this.input.value.trim();
-    this.input.value = `${quoted}\n\n${current}`;
-    this.grow();
+    this.input.value = current ? `${quoted}\n\n${current}` : `${quoted}\n\n`;
+    this.afterEdit();
     this.input.focus();
     this.input.setSelectionRange(this.input.value.length, this.input.value.length);
   }
@@ -174,38 +245,48 @@ export class ChatPanel {
   /** Put text in the composer without sending it. */
   insert(text: string): void {
     this.input.value = text;
-    this.grow();
-    this.updateMenu();
+    this.afterEdit();
     this.input.focus();
+    this.input.setSelectionRange(text.length, text.length);
   }
 
-  /**
-   * Start over.
-   *
-   * Closing the socket is the reset: the server disposes the agent with the
-   * connection, so there is no half-cleared session left behind.
-   */
-  clear(): void {
+  dispose(): void {
+    this.disposed = true;
+    document.removeEventListener("pointerdown", this.onOutside, true);
+    window.clearInterval(this.ticker);
     this.socket?.close();
     this.socket = null;
-    this.calls.clear();
-    this.setActivity({ ...IDLE_AGENT, model: this.activity.model });
-    this.events.onContext?.({ total: 0, window: 0, pressure: 0 });
-    this.renderWelcome();
-    this.connect();
-    this.input.focus();
+    this.root.remove();
   }
 
   /* ---------------------------------------------------------------- input */
 
   private bind(): void {
+    this.scroller.addEventListener(
+      "scroll",
+      () => {
+        const distance = this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight;
+        this.pinned = distance < 80;
+      },
+      { passive: true },
+    );
     this.input.addEventListener("keydown", (event) => this.onKey(event));
     this.input.addEventListener("input", () => {
       this.historyAt = -1;
-      this.grow();
-      this.updateMenu();
+      this.afterEdit();
     });
-    this.box.addEventListener("click", () => this.input.focus());
+    this.composer.addEventListener("click", (event) => {
+      if (event.target === this.composer) this.input.focus();
+    });
+    this.sendButton.addEventListener("click", () => {
+      if (this.sendMode === "stop") this.cancel();
+      else this.submit();
+    });
+    this.modelChip.addEventListener("click", () => this.events.onModelClick?.());
+    this.ring.addEventListener("click", () => {
+      this.pop.hidden = !this.pop.hidden;
+      if (!this.pop.hidden) this.renderPop();
+    });
     this.menu.addEventListener("mousedown", (event) => {
       // mousedown, not click: a click would blur the input first and close
       // the menu out from under the pointer.
@@ -214,6 +295,13 @@ export class ChatPanel {
       event.preventDefault();
       this.runCommand(item.dataset.command ?? "");
     });
+    document.addEventListener("pointerdown", this.onOutside, true);
+  }
+
+  private afterEdit(): void {
+    this.grow();
+    this.updateMenu();
+    this.updateSend();
   }
 
   private onKey(event: KeyboardEvent): void {
@@ -231,31 +319,27 @@ export class ChatPanel {
       this.insert(`/${this.menuItems[this.menuActive].name} `);
       return;
     }
-    if (menuOpen && event.key === "Enter" && !event.shiftKey) {
+    if (menuOpen && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       this.runCommand(this.menuItems[this.menuActive].name);
       return;
     }
 
     if (event.key === "Escape") {
-      if (menuOpen) {
-        this.menu.hidden = true;
-      } else if (this.activity.busy) {
-        this.cancel();
-      } else {
-        return;
-      }
-      // Handled here, so the page's own Escape (clear a selection, close
-      // search) does not also fire behind it.
+      if (menuOpen) this.menu.hidden = true;
+      else if (!this.pop.hidden) this.pop.hidden = true;
+      else if (this.activity.busy) this.cancel();
+      else return;
+      // Handled here, so the page's own Escape does not also fire behind it.
       event.preventDefault();
       event.stopPropagation();
       return;
     }
 
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-      // isComposing: Enter confirms a kana-to-kanji conversion, and sending
-      // the half-converted sentence is the single most irritating thing a
-      // chat box can do to someone typing Japanese.
+      // isComposing: Enter confirms a kana-to-kanji conversion, and sending the
+      // half-converted sentence is the most irritating thing a composer can do
+      // to someone typing Japanese.
       event.preventDefault();
       this.submit();
       return;
@@ -268,6 +352,7 @@ export class ChatPanel {
       this.historyAt = Math.min(this.history.length - 1, this.historyAt + 1);
       this.input.value = this.history[this.history.length - 1 - this.historyAt];
       this.grow();
+      this.updateSend();
       return;
     }
     if (event.key === "ArrowDown" && this.historyAt >= 0 && this.caretOnLastLine()) {
@@ -276,6 +361,7 @@ export class ChatPanel {
       this.input.value =
         this.historyAt >= 0 ? this.history[this.history.length - 1 - this.historyAt] : "";
       this.grow();
+      this.updateSend();
     }
   }
 
@@ -287,10 +373,13 @@ export class ChatPanel {
     return !this.input.value.slice(this.input.selectionEnd).includes("\n");
   }
 
-  /** Grow with the content, to a point. */
   private grow(): void {
     this.input.style.height = "auto";
-    this.input.style.height = `${Math.min(220, this.input.scrollHeight)}px`;
+    const height = this.input.scrollHeight;
+    this.input.style.height = `${Math.min(240, height)}px`;
+    // A scrollbar only once the box has stopped growing; before that it is a
+    // pair of arrows beside two lines of placeholder.
+    this.input.style.overflowY = height > 240 ? "auto" : "hidden";
   }
 
   private updateMenu(): void {
@@ -309,20 +398,19 @@ export class ChatPanel {
 
   private renderMenu(): void {
     this.menu.replaceChildren(
-      ...this.menuItems.map((command, index) => {
-        const item = h(
+      ...this.menuItems.map((command, index) =>
+        h(
           "div",
           {
-            class: `cc-menu-item${index === this.menuActive ? " on" : ""}`,
+            class: `cmenu-item${index === this.menuActive ? " on" : ""}`,
             role: "option",
             "aria-selected": String(index === this.menuActive),
             "data-command": command.name,
           },
-          h("span", { class: "cc-menu-name", text: `/${command.name}` }),
-          h("span", { class: "cc-menu-summary", text: command.summary }),
-        );
-        return item;
-      }),
+          h("span", { class: "cmenu-name", text: `/${command.name}` }),
+          h("span", { class: "cmenu-summary", text: command.summary }),
+        ),
+      ),
     );
   }
 
@@ -345,14 +433,22 @@ export class ChatPanel {
     });
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
-      if (this.activity.busy) this.fail(this.strings.cannotConnect);
       this.socket = null;
+      if (this.disposed) return;
+      if (this.activity.busy) {
+        this.fail(this.strings.cannotConnect);
+      } else if (this.hadConversation) {
+        // The server's agent went with the socket. Say so, rather than let the
+        // next message quietly start a conversation that remembers nothing.
+        this.add(h("div", { class: "m-note", text: this.strings.chatConnectionLost }));
+      }
+      this.hadConversation = false;
     });
     this.socket = socket;
     return socket;
   }
 
-  private send(payload: Record<string, unknown>): void {
+  private transmit(payload: Record<string, unknown>): void {
     const socket = this.connect();
     const data = JSON.stringify(payload);
     if (socket.readyState === WebSocket.OPEN) socket.send(data);
@@ -366,29 +462,32 @@ export class ChatPanel {
     this.input.value = "";
     this.grow();
     this.menu.hidden = true;
-    this.log.querySelector(".cc-welcome")?.remove();
+    this.pop.hidden = true;
     if (this.history[this.history.length - 1] !== text) this.history.push(text);
     if (this.history.length > HISTORY_LIMIT) this.history.shift();
     this.historyAt = -1;
 
     // While a turn is running the composer steers it rather than queueing a
-    // new one: a model three tool calls into the wrong file needs telling
-    // now, and cancelling to re-prompt throws away the work already done.
+    // new one: a model three tool calls into the wrong file needs telling now,
+    // and cancelling to re-prompt throws away the work already done.
     const steering = this.activity.busy;
     const isCommand = /^\/[a-zA-Z][\w-]*(\s|$)/.test(text);
-    this.entry(steering ? "steer" : "user", steering ? "↳" : ">").body.append(
-      ...(steering ? [h("span", { class: "cc-tag", text: this.strings.chatSteer })] : []),
-      h("span", { class: "cc-user-text ja", text }),
-    );
-    this.scroll();
+    this.showUser(text, steering);
 
-    if (!steering && !isCommand) this.beginTurn();
-    this.send(steering ? { steer: text } : { message: text });
+    if (!steering && !isCommand) {
+      if (!this.title) {
+        this.title = text.replace(/\s+/g, " ").slice(0, 80);
+        this.events.onTitle?.(this.title);
+      }
+      this.beginTurn();
+    }
+    this.transmit(steering ? { steer: text } : { message: text });
+    this.updateSend();
   }
 
   private cancel(): void {
     if (!this.activity.busy) return;
-    this.send({ cancel: true });
+    this.transmit({ cancel: true });
     this.workingText.textContent = this.strings.chatStopping;
   }
 
@@ -398,16 +497,19 @@ export class ChatPanel {
     const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
     switch (String(frame.type ?? "")) {
       case "conversation":
-        this.setActivity({ ...this.activity, model: String(frame.adapter ?? "") });
+        this.hadConversation = true;
+        this.adapter = String(frame.adapter ?? "");
+        this.setActivity({ ...this.activity, model: this.adapter });
+        this.renderComposer();
         break;
 
       case "commands":
         this.commands = (frame.commands as SlashCommand[]) ?? [];
-        this.events.onCommands?.(this.commands);
         this.updateMenu();
         break;
 
       case "step/start":
+        this.toolGroup = null;
         this.setActivity({ ...this.activity, step: Number(frame.step ?? 0) });
         this.tick();
         break;
@@ -425,9 +527,7 @@ export class ChatPanel {
         break;
 
       case "steered": {
-        // :last-of-type matches element type, not class, so it would miss a
-        // steer followed by any other entry. Take the last one explicitly.
-        const steers = this.log.querySelectorAll(".cc-steer");
+        const steers = this.column.querySelectorAll(".m-user.steer");
         steers[steers.length - 1]?.classList.add("landed");
         break;
       }
@@ -441,7 +541,7 @@ export class ChatPanel {
         break;
 
       case "cancelled":
-        this.result(this.entry("notice", "⎿"), this.strings.chatInterrupted, "bad");
+        this.add(h("div", { class: "m-note bad", text: this.strings.chatInterrupted }));
         break;
 
       case "turn/end":
@@ -457,19 +557,21 @@ export class ChatPanel {
 
   private beginTurn(): void {
     this.calls.clear();
+    this.toolGroup = null;
+    this.runningTool = "";
     this.turnStarted = performance.now();
     this.setActivity({ ...this.activity, busy: true, step: 0 });
     this.working.hidden = false;
+    this.column.append(this.working);
     window.clearInterval(this.ticker);
-    this.ticker = window.setInterval(() => this.tick(), 120);
+    this.ticker = window.setInterval(() => this.tick(), 250);
     this.tick();
+    this.scroll(true);
   }
 
   private endTurn(frame: Record<string, unknown>): void {
     const s = this.strings;
     const parts = [s.chatWorkedFor.replace("{t}", elapsed(Number(frame.duration_ms ?? 0)))];
-    const steps = Number(frame.steps ?? 0);
-    if (steps > 1) parts.push(`${steps} ${s.chatSteps}`);
     const calls = Number(frame.tool_calls ?? 0);
     if (calls > 0) parts.push(`${calls} ${calls === 1 ? s.chatToolCall : s.chatToolCalls}`);
     const tokens = Number(frame.input_tokens ?? 0) + Number(frame.output_tokens ?? 0);
@@ -479,7 +581,7 @@ export class ChatPanel {
     const reason = String(frame.reason ?? "");
     if (reason && reason !== "completed" && reason !== "cancelled") parts.push(reason);
 
-    this.log.append(h("div", { class: "cc-summary" }, h("span", { text: "✻" }), parts.join(" · ")));
+    this.add(h("div", { class: "m-footer" }, icon("spark", 12), h("span", { text: parts.join(" · ") })));
     this.gauge(frame.context);
     this.stopWorking();
     this.setActivity({ ...this.activity, turns: this.activity.turns + 1 });
@@ -487,8 +589,7 @@ export class ChatPanel {
   }
 
   private fail(message: string): void {
-    const row = this.entry("error", "⏺");
-    row.body.append(h("span", { class: "ja", text: message }));
+    this.add(h("div", { class: "m-error ja", text: message }));
     this.stopWorking();
     this.scroll();
   }
@@ -502,129 +603,192 @@ export class ChatPanel {
 
   private tick(): void {
     const s = this.strings;
-    if (!this.still.matches) {
-      this.frame = (this.frame + 1) % SPINNER.length;
-      this.glyph.textContent = SPINNER[this.frame];
-    }
-    this.workingText.textContent = this.runningTool
-      ? `${s.chatRunning} ${this.runningTool}…`
-      : s.chatThinking;
+    this.workingText.textContent = this.runningTool ? `${this.runningTool}…` : s.chatThinking;
     const parts = [elapsed(performance.now() - this.turnStarted, true)];
-    if (this.activity.step > 0) parts.push(`${s.chatStep} ${this.activity.step}`);
+    if (this.activity.step > 1) parts.push(`${s.chatStep} ${this.activity.step}`);
     parts.push(s.chatEscInterrupt);
-    this.workingMeta.textContent = `(${parts.join(" · ")})`;
+    this.workingMeta.textContent = parts.join(" · ");
   }
 
   private setActivity(activity: AgentActivity): void {
-    const wasBusy = this.activity.busy;
+    const changedBusy = this.activity.busy !== activity.busy;
     this.activity = activity;
-    if (wasBusy !== activity.busy) this.renderHints();
+    if (changedBusy) this.renderComposer();
+    if (!this.pop.hidden) this.renderPop();
     this.events.onActivity?.(activity);
   }
 
   private gauge(context: unknown): void {
     if (!context || typeof context !== "object") return;
     const data = context as Record<string, unknown>;
-    this.events.onContext?.({
+    this.gaugeState = {
       total: Number(data.total ?? 0),
       window: Number(data.context_window ?? 0),
       pressure: Number(data.pressure ?? 0),
-    });
+    };
+    this.renderRing();
+    if (!this.pop.hidden) this.renderPop();
   }
 
   /* ---------------------------------------------------------------- render */
 
-  private renderHints(): void {
-    const s = this.strings;
-    this.hintLeft.textContent = this.activity.busy ? s.chatHintBusy : s.chatHintIdle;
-    this.hintLeft.classList.toggle("steer", this.activity.busy);
-    this.box.classList.toggle("steer", this.activity.busy);
-    this.input.placeholder = this.activity.busy ? s.chatSteerPlaceholder : s.chatPlaceholder;
-    this.hintRight.textContent = "";
+  private add(node: HTMLElement): HTMLElement {
+    this.column.insertBefore(node, this.working);
+    this.setEmpty(false);
+    return node;
   }
 
-  private renderWelcome(): void {
+  private setEmpty(empty: boolean): void {
+    if (this.root.classList.contains("is-empty") === empty) return;
+    this.root.classList.toggle("is-empty", empty);
+    this.renderComposer();
+  }
+
+  private renderGreeting(): void {
     const s = this.strings;
-    const suggestions = h("div", { class: "cc-suggestions" });
-    for (const text of [s.chatSuggest1, s.chatSuggest2, s.chatSuggest3]) {
-      const button = h("button", { class: "cc-suggestion ja", type: "button", text });
-      button.addEventListener("click", () => {
-        this.input.value = text;
-        this.submit();
-      });
-      suggestions.append(button);
+    const hour = new Date().getHours();
+    const hello =
+      hour >= 5 && hour < 11 ? s.greetMorning : hour >= 11 && hour < 18 ? s.greetAfternoon : s.greetEvening;
+    this.greeting.replaceChildren(
+      h("div", { class: "greeting-mark", "aria-hidden": "true", text: "声" }),
+      h("h2", { class: "greeting-title", text: hello }),
+      h("p", { class: "greeting-sub ja", text: s.chatEmpty }),
+    );
+
+    this.suggestions.replaceChildren(
+      ...[
+        ["waveform", s.chatSuggest1],
+        ["minutes", s.chatSuggest2],
+        ["code", s.chatSuggest3],
+      ].map(([glyph, text]) => {
+        const button = h("button", { class: "suggestion ja", type: "button" }, icon(glyph as IconName, 15), text);
+        button.addEventListener("click", () => {
+          this.input.value = text;
+          this.submit();
+        });
+        return button;
+      }),
+    );
+  }
+
+  private renderComposer(): void {
+    const s = this.strings;
+    const busy = this.activity.busy;
+    const empty = this.root.classList.contains("is-empty");
+    this.input.placeholder = busy
+      ? s.chatSteerPlaceholder
+      : empty
+        ? s.chatPlaceholder
+        : s.chatReplyPlaceholder;
+    this.input.setAttribute("aria-label", this.input.placeholder);
+    this.composer.classList.toggle("steer", busy);
+    this.steerHint.hidden = !busy;
+    this.steerHint.textContent = s.chatHintBusy;
+    this.foot.textContent = s.chatDisclaimer;
+
+    const commands = this.composer.querySelector<HTMLElement>('[data-role="commands"]');
+    if (commands) {
+      commands.title = `${s.chatCommandsButton} (/)`;
+      commands.setAttribute("aria-label", s.chatCommandsButton);
     }
 
-    this.log.replaceChildren(
-      h(
-        "div",
-        { class: "cc-welcome" },
-        h(
-          "div",
-          { class: "cc-welcome-card" },
-          h(
-            "div",
-            { class: "cc-welcome-title" },
-            h("span", { class: "cc-welcome-mark", "aria-hidden": "true", text: "✻" }),
-            h("span", { text: s.chatWelcome }),
-          ),
-          h("p", { class: "cc-welcome-body ja", text: s.chatEmpty }),
-          h(
-            "ul",
-            { class: "cc-tips" },
-            h("li", { class: "ja", text: s.chatTip1 }),
-            h("li", { class: "ja", text: s.chatTip2 }),
-            h("li", { class: "ja", text: s.chatTip3 }),
-          ),
-        ),
-        suggestions,
-      ),
+    const model = this.adapter || this.fallbackModel || "—";
+    this.modelChip.replaceChildren(h("span", { text: model }), icon("chevron-down", 14));
+    this.modelChip.title = s.harnessModel;
+    this.updateSend(true);
+    this.renderRing();
+  }
+
+  private updateSend(force = false): void {
+    const s = this.strings;
+    const hasText = this.input.value.trim().length > 0;
+    const mode = this.activity.busy && !hasText ? "stop" : "send";
+    if (force || mode !== this.sendMode) {
+      this.sendMode = mode;
+      this.sendButton.replaceChildren(icon(mode === "stop" ? "stop" : "arrow-up", 16));
+      this.sendButton.classList.toggle("stop", mode === "stop");
+    }
+    this.sendButton.disabled = mode === "send" && !hasText;
+    const label = mode === "stop" ? `${s.chatStop} (Esc)` : this.activity.busy ? s.chatSteer : s.chatSend;
+    this.sendButton.title = label;
+    this.sendButton.setAttribute("aria-label", label);
+  }
+
+  private renderRing(): void {
+    const pressure = Math.max(0, Math.min(1, this.gaugeState.pressure));
+    this.ring.hidden = this.gaugeState.total <= 0;
+    this.ringArc.style.strokeDashoffset = String(RING * (1 - Math.max(pressure, 0.02)));
+    this.ring.classList.toggle("warn", pressure >= 0.6 && pressure < 0.8);
+    this.ring.classList.toggle("bad", pressure >= 0.8);
+    const label = this.strings.contextUsed.replace("{p}", String(Math.round(pressure * 100)));
+    this.ring.title = `${label} · ${this.strings.contextAutoCompact}`;
+    this.ring.setAttribute("aria-label", label);
+  }
+
+  /** The harness in a card: what this session's agent is doing and how full it is. */
+  private renderPop(): void {
+    const s = this.strings;
+    const { total, window: size, pressure } = this.gaugeState;
+    const facts = h("dl", { class: "kv" });
+    const fact = (label: string, value: string) =>
+      facts.append(h("dt", { text: label }), h("dd", { text: value }));
+    fact(s.harnessModel, this.adapter || this.fallbackModel || "—");
+    fact(
+      s.harnessContext,
+      size > 0
+        ? `${Math.round(pressure * 100)}% · ${compactNumber(total)} / ${compactNumber(size)}`
+        : compactNumber(total),
+    );
+    fact(s.harnessTurns, String(this.activity.turns));
+    fact(s.harnessToolCalls, String(this.activity.toolCalls));
+    fact(s.harnessCompactions, String(this.activity.compactions));
+
+    const bar = h("i");
+    bar.style.width = `${(Math.max(0, Math.min(1, pressure)) * 100).toFixed(1)}%`;
+    bar.className = pressure >= 0.8 ? "bad" : pressure >= 0.6 ? "warn" : "";
+
+    const compact = h("button", { class: "btn ghost sm", type: "button" }, icon("compress", 14), s.compactNow);
+    compact.disabled = this.activity.busy || !this.hadConversation;
+    compact.addEventListener("click", () => {
+      this.pop.hidden = true;
+      this.input.value = "/compact";
+      this.submit();
+    });
+
+    this.pop.replaceChildren(
+      h("div", { class: "gauge" }, bar),
+      facts,
+      h("p", { class: "note ja", text: s.harnessHint }),
+      compact,
     );
   }
 
-  /** One transcript entry: a marker in the gutter, a body beside it. */
-  private entry(kind: string, marker: string): { row: HTMLElement; body: HTMLElement } {
-    const body = h("div", { class: "cc-body" });
-    const row = h(
-      "div",
-      { class: `cc-entry cc-${kind}` },
-      h("span", { class: "cc-marker", "aria-hidden": "true", text: marker }),
-      body,
-    );
-    this.log.append(row);
-    return { row, body };
-  }
-
-  /** The `⎿` line under an entry. */
-  private result(target: { body: HTMLElement }, text: string, tone = ""): HTMLElement {
-    const node = h(
-      "div",
-      { class: `cc-result${tone ? ` ${tone}` : ""}` },
-      h("span", { class: "cc-elbow", "aria-hidden": "true", text: "⎿" }),
-      h("span", { class: "cc-result-text", text }),
-    );
-    target.body.append(node);
-    return node;
+  private showUser(text: string, steering: boolean): void {
+    const node = h("div", { class: `m-user${steering ? " steer" : ""}` });
+    if (steering) node.append(h("div", { class: "steer-label", text: `↳ ${this.strings.chatSteer}` }));
+    node.append(h("div", { class: "bubble ja", text }));
+    this.add(node);
+    this.toolGroup = null;
+    this.scroll(true);
   }
 
   private showAnswer(text: string): void {
     if (!text.trim()) return;
-    const { row, body } = this.entry("assistant", "⏺");
-    body.append(renderMarkdown(text));
+    this.toolGroup = null;
+    const prose = h("div", { class: "prose" });
+    prose.append(renderMarkdown(text));
 
-    const copy = h("button", {
-      class: "icon-btn sm cc-copy",
-      type: "button",
-      title: this.strings.copy,
-      "aria-label": this.strings.copy,
-      text: "⧉",
-    });
+    const copy = h(
+      "button",
+      { class: "icon-btn ghost sm", type: "button", title: this.strings.copy, "aria-label": this.strings.copy },
+      icon("copy", 14),
+    );
     copy.addEventListener("click", () => {
       void copyText(text).then((ok) =>
         ok ? this.notify.ok(this.strings.copied) : this.notify.error(this.strings.copyFailed),
       );
     });
-    row.append(copy);
+    this.add(h("div", { class: "m-assistant" }, prose, h("div", { class: "m-actions" }, copy)));
     this.scroll();
   }
 
@@ -632,32 +796,45 @@ export class ChatPanel {
     const id = String(frame.id ?? "");
     const name = String(frame.name ?? "");
     const args = (frame.arguments ?? {}) as Record<string, unknown>;
+    const { verb, target, glyph } = describeTool(name, args, this.strings);
 
-    const entry = this.entry("tool", "⏺");
-    entry.row.classList.add("running");
-    const meta = h("span", { class: "cc-tool-meta" });
-    entry.body.append(
-      h(
-        "div",
-        { class: "cc-tool-head" },
-        h("span", { class: "cc-tool-name", text: name }),
-        h("span", { class: "cc-tool-args", text: `(${describeArgs(args)})` }),
-        meta,
-      ),
+    if (!this.toolGroup) this.toolGroup = this.add(h("div", { class: "tools" }));
+
+    const status = h("span", { class: "tool-status" }, h("span", { class: "spinner" }));
+    const time = h("span", { class: "tool-time" });
+    const head = h(
+      "button",
+      { class: "tool-head", type: "button", "aria-expanded": "false", title: `${name}(${describeArgs(args, 400)})` },
+      status,
+      h("span", { class: "tool-glyph" }, icon(glyph, 14)),
+      h("span", { class: "tool-verb", text: verb }),
+      h("span", { class: "tool-target", text: target }),
+      h("span", { class: "grow" }),
+      time,
+      h("span", { class: "tool-chev" }, icon("chevron-right", 14)),
     );
-    const result = h("div", { class: "cc-tool-result" });
-    entry.body.append(result);
+    const output = h("pre", { class: "tool-output" });
+    const body = h("div", { class: "tool-body" }, output);
+    body.hidden = true;
+    const row = h("div", { class: "tool running" }, head, body);
+    head.addEventListener("click", () => {
+      const open = body.hidden;
+      body.hidden = !open;
+      head.setAttribute("aria-expanded", String(open));
+      row.classList.toggle("open", open);
+    });
 
-    this.calls.set(id, { row: entry.row, meta, result, name });
-    this.runningTool = name;
+    this.toolGroup.append(row);
+    this.calls.set(id, { row, head, status, time, body, output, verb });
+    this.runningTool = verb;
     this.setActivity({ ...this.activity, toolCalls: this.activity.toolCalls + 1 });
     this.tick();
     this.scroll();
   }
 
   private showResult(frame: Record<string, unknown>): void {
-    // The harness keys a result by `id`, the call it answers. `call_id` is the
-    // pre-harness loop's name for it, still accepted so an older server works.
+    // The harness keys a result by `id`, the call it answers; `call_id` is the
+    // pre-harness loop's name for it, accepted so an older server still pairs.
     const view = this.calls.get(String(frame.id ?? frame.call_id ?? ""));
     if (!view) return;
 
@@ -665,39 +842,18 @@ export class ChatPanel {
     const ms = Number(frame.duration_ms ?? 0);
     view.row.classList.remove("running");
     view.row.classList.add(ok ? "ok" : "failed");
+    view.status.replaceChildren(icon(ok ? "check" : "x", 14));
     // The error code, not just "failed": `no_tool` and `denied` send a reader
     // to completely different places.
-    view.meta.textContent = ok ? elapsed(ms) : `${String(frame.error ?? "error")} · ${elapsed(ms)}`;
-
-    const content = String(frame.content ?? "").replace(/\s+$/, "");
-    const lines = content ? content.split("\n") : [];
-    const holder = { body: view.result };
-
-    if (lines.length === 0) {
-      this.result(holder, this.strings.chatNoOutput, "dim");
-    } else if (!ok || lines.length <= PREVIEW_LINES) {
-      // A failure is shown whole: it is the thing the reader needs.
-      this.result(holder, content, ok ? "" : "bad");
-    } else {
-      const line = this.result(holder, lines.slice(0, PREVIEW_LINES).join("\n"));
-      const more = h("button", {
-        class: "cc-more",
-        type: "button",
-        text: this.strings.chatMoreLines.replace("{n}", String(lines.length - PREVIEW_LINES)),
-      });
-      let open = false;
-      more.addEventListener("click", () => {
-        open = !open;
-        const text = line.querySelector(".cc-result-text");
-        if (text) text.textContent = open ? content : lines.slice(0, PREVIEW_LINES).join("\n");
-        more.textContent = open
-          ? this.strings.chatCollapse
-          : this.strings.chatMoreLines.replace("{n}", String(lines.length - PREVIEW_LINES));
-      });
-      line.append(more);
+    view.time.textContent = ok ? elapsed(ms) : `${String(frame.error ?? "error")} · ${elapsed(ms)}`;
+    view.output.textContent = String(frame.content ?? "").replace(/\s+$/, "") || this.strings.chatNoOutput;
+    if (!ok) {
+      // A failure opens itself: it is the thing the reader needs.
+      view.body.hidden = false;
+      view.head.setAttribute("aria-expanded", "true");
+      view.row.classList.add("open");
     }
-
-    if (this.runningTool === view.name) this.runningTool = "";
+    if (this.runningTool === view.verb) this.runningTool = "";
     this.tick();
     this.scroll();
   }
@@ -706,66 +862,108 @@ export class ChatPanel {
     const error = frame.error ? String(frame.error) : "";
     const shadowed = Number(frame.shadowed ?? 0);
     const tokens = Number(frame.shadowed_tokens ?? 0);
-    const detail = error || [
-      String(frame.kind ?? ""),
-      shadowed > 0 ? `${shadowed} events` : "",
-      tokens > 0 ? `${compactNumber(tokens)} tokens` : "",
-    ].filter(Boolean).join(" · ");
-
-    const row = this.entry("notice", "✻");
-    row.body.append(h("span", { class: "cc-notice-text", text: this.strings.chatCompacted }));
-    if (detail) this.result(row, detail, error ? "bad" : "dim");
-    if (!error) {
-      this.setActivity({ ...this.activity, compactions: this.activity.compactions + 1 });
-    }
+    const detail =
+      error ||
+      [shadowed > 0 ? `${shadowed} events` : "", tokens > 0 ? `${compactNumber(tokens)} tokens` : ""]
+        .filter(Boolean)
+        .join(" · ");
+    this.add(
+      h(
+        "div",
+        { class: `m-divider${error ? " bad" : ""}` },
+        h("span", {}, icon("compress", 13), `${this.strings.chatCompacted}${detail ? ` · ${detail}` : ""}`),
+      ),
+    );
+    if (!error) this.setActivity({ ...this.activity, compactions: this.activity.compactions + 1 });
     this.scroll();
   }
 
   /**
    * A command's answer.
    *
-   * Rendered as the harness replying, under the line that invoked it, rather
-   * than as the assistant: a transcript in which the model answered /context
-   * is a transcript of something that did not happen.
+   * Rendered as the harness replying, not as the assistant: a transcript in
+   * which the model answered /context is a transcript of something that did
+   * not happen.
    */
   private showCommand(frame: Record<string, unknown>): void {
     this.gauge(frame.context);
     if (frame.reload) {
-      this.calls.clear();
-      this.setActivity({ ...IDLE_AGENT, model: this.activity.model });
-      this.renderWelcome();
+      this.reset();
       return;
     }
-    const users = this.log.querySelectorAll<HTMLElement>(".cc-user .cc-body");
-    const last = users[users.length - 1];
-    const host = last ? { body: last } : this.entry("notice", "⎿");
-    this.result(host, String(frame.text ?? ""), frame.ok ? "mono" : "bad mono");
+    this.add(h("div", { class: `m-command${frame.ok ? "" : " bad"}` }, h("pre", { text: String(frame.text ?? "") })));
     this.scroll();
   }
 
-  private scroll(): void {
-    // Follow the output only if the reader is already at the bottom. Yanking
-    // someone back down while they scroll up to re-read a tool result is the
-    // classic way a live log becomes unreadable.
-    const distance = this.log.scrollHeight - this.log.scrollTop - this.log.clientHeight;
-    if (distance < 120) this.log.scrollTop = this.log.scrollHeight;
+  /** /clear: the same session, a new conversation. */
+  private reset(): void {
+    for (const node of [...this.column.children]) if (node !== this.working) node.remove();
+    this.calls.clear();
+    this.toolGroup = null;
+    this.title = "";
+    this.events.onTitle?.("");
+    this.setActivity({ ...IDLE_AGENT, model: this.adapter });
+    this.setEmpty(true);
+  }
+
+  private scroll(force = false): void {
+    // Follow the output only if the reader was at the bottom *before* this
+    // entry arrived. Measuring after appending made any long answer "far from
+    // the bottom", so the log stopped following exactly when it mattered; and
+    // yanking someone down while they re-read a result makes it unreadable.
+    if (force) this.pinned = true;
+    if (this.pinned) this.scroller.scrollTop = this.scroller.scrollHeight;
   }
 }
 
+/* -------------------------------------------------------------------- tools */
+
 /**
- * A call's arguments the way Claude Code shows them: a lone string argument is
- * just its value — `read(src/app.py)` — and anything else is `key: value`.
+ * A call the way a person would say it: "Read README.md", not
+ * `read_file(path="README.md")`. The raw call is still on the row's tooltip.
  */
-function describeArgs(args: Record<string, unknown>, limit = 72): string {
-  const entries = Object.entries(args);
-  let text: string;
-  if (entries.length === 1 && typeof entries[0][1] === "string") {
-    text = entries[0][1] as string;
-  } else {
-    text = entries.map(([key, value]) => `${key}: ${render(value)}`).join(", ");
+function describeTool(
+  name: string,
+  args: Record<string, unknown>,
+  s: Strings,
+): { verb: string; target: string; glyph: IconName } {
+  const text = (key: string) => (typeof args[key] === "string" ? (args[key] as string) : "");
+  switch (name) {
+    case "read_file":
+      return { verb: s.toolRead, target: text("path"), glyph: "file" };
+    case "list_files":
+      return { verb: s.toolList, target: text("path") || ".", glyph: "folder" };
+    case "glob_files":
+      return { verb: s.toolGlob, target: text("pattern"), glyph: "folder" };
+    case "grep_files":
+      return { verb: s.toolSearch, target: text("pattern"), glyph: "search" };
+    case "write_file":
+      return { verb: s.toolWrite, target: text("path"), glyph: "pencil" };
+    case "edit_file":
+      return { verb: s.toolEdit, target: text("path"), glyph: "pencil" };
+    case "terminal_run":
+      return { verb: s.toolRun, target: text("command"), glyph: "terminal" };
+    case "terminal_read":
+    case "terminal_list":
+    case "terminal_close":
+      return { verb: s.toolTerminal, target: name.slice("terminal_".length), glyph: "terminal" };
+    case "current_transcript":
+      return { verb: s.toolTranscript, target: "", glyph: "waveform" };
+    case "current_minutes":
+      return { verb: s.toolMinutes, target: "", glyph: "minutes" };
+    default:
+      return { verb: name, target: describeArgs(args), glyph: "tool" };
   }
-  text = text.replace(/\s+/g, " ");
-  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+}
+
+function describeArgs(args: Record<string, unknown>, limit = 90): string {
+  const entries = Object.entries(args);
+  const text =
+    entries.length === 1 && typeof entries[0][1] === "string"
+      ? (entries[0][1] as string)
+      : entries.map(([key, value]) => `${key}: ${render(value)}`).join(", ");
+  const flat = text.replace(/\s+/g, " ");
+  return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
 }
 
 function render(value: unknown): string {
@@ -775,6 +973,27 @@ function render(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function ringSvg(): { svg: SVGSVGElement; arc: SVGCircleElement } {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 18 18");
+  svg.setAttribute("width", "18");
+  svg.setAttribute("height", "18");
+  svg.setAttribute("aria-hidden", "true");
+  const track = document.createElementNS(SVG, "circle");
+  const arc = document.createElementNS(SVG, "circle");
+  for (const circle of [track, arc]) {
+    circle.setAttribute("cx", "9");
+    circle.setAttribute("cy", "9");
+    circle.setAttribute("r", "7");
+  }
+  track.setAttribute("class", "ring-track");
+  arc.setAttribute("class", "ring-arc");
+  arc.setAttribute("stroke-dasharray", String(RING));
+  arc.setAttribute("transform", "rotate(-90 9 9)");
+  svg.append(track, arc);
+  return { svg, arc };
 }
 
 function elapsed(ms: number, whole = false): string {

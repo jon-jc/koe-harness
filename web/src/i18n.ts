@@ -123,13 +123,40 @@ export interface Strings {
   readonly wsChat: string;
   readonly wsTerminal: string;
   readonly wsCode: string;
-  readonly agentTitle: string;
-  readonly agentNew: string;
-  readonly agentHide: string;
-  readonly chatWelcome: string;
-  readonly chatTip1: string;
-  readonly chatTip2: string;
-  readonly chatTip3: string;
+  readonly newSession: string;
+  readonly sessionsHeading: string;
+  readonly sessionUntitled: string;
+  readonly sessionWorking: string;
+  readonly sessionNoMessages: string;
+  readonly sessionTurn: string;
+  readonly sessionTurns: string;
+  readonly showInTranscript: string;
+  readonly sessionClose: string;
+  readonly recordMeeting: string;
+  readonly recordingLive: string;
+  readonly greetMorning: string;
+  readonly greetAfternoon: string;
+  readonly greetEvening: string;
+  readonly chatReplyPlaceholder: string;
+  readonly chatCommandsButton: string;
+  readonly contextUsed: string;
+  readonly contextAutoCompact: string;
+  readonly compactNow: string;
+  readonly sidebarToggle: string;
+  readonly panelClose: string;
+  readonly shortcutNewSession: string;
+  readonly chatDisclaimer: string;
+  readonly chatConnectionLost: string;
+  readonly toolRead: string;
+  readonly toolList: string;
+  readonly toolSearch: string;
+  readonly toolGlob: string;
+  readonly toolWrite: string;
+  readonly toolEdit: string;
+  readonly toolRun: string;
+  readonly toolTerminal: string;
+  readonly toolTranscript: string;
+  readonly toolMinutes: string;
   readonly chatSuggest1: string;
   readonly chatSuggest2: string;
   readonly chatSuggest3: string;
@@ -137,33 +164,19 @@ export interface Strings {
   readonly chatHintBusy: string;
   readonly chatEscInterrupt: string;
   readonly chatWorkedFor: string;
-  readonly chatMoreLines: string;
-  readonly chatCollapse: string;
   readonly chatCompacted: string;
   readonly chatInterrupted: string;
   readonly chatNoOutput: string;
-  readonly sideSession: string;
-  readonly sideExplorer: string;
-  readonly sideOutline: string;
-  readonly sideHarness: string;
-  readonly outlineEmpty: string;
   readonly harnessModel: string;
-  readonly harnessState: string;
   readonly harnessContext: string;
   readonly harnessTurns: string;
   readonly harnessToolCalls: string;
   readonly harnessCompactions: string;
-  readonly harnessCommands: string;
-  readonly harnessIdle: string;
-  readonly harnessRunning: string;
   readonly harnessHint: string;
   readonly shortcutSidebar: string;
   readonly shortcutPanel: string;
   readonly shortcutAgent: string;
-  readonly shortcutAgentPanel: string;
   readonly shortcutTabs: string;
-  readonly statusContext: string;
-  readonly resetLayout: string;
   readonly chatPlaceholder: string;
   readonly chatSend: string;
   readonly chatSteer: string;
@@ -426,13 +439,40 @@ const JA: Strings = {
   wsChat: "チャット",
   wsTerminal: "端末",
   wsCode: "コード",
-  agentTitle: "エージェント",
-  agentNew: "新しい会話",
-  agentHide: "パネルを隠す",
-  chatWelcome: "koe ハーネスへようこそ",
-  chatTip1: "/ でコマンド、↑ で入力履歴",
-  chatTip2: "作業中に入力すると、次のステップで軌道修正されます",
-  chatTip3: "文字起こしを選択して Ctrl+L で引用",
+  newSession: "新しいセッション",
+  sessionsHeading: "セッション",
+  sessionUntitled: "新しいセッション",
+  sessionWorking: "作業中…",
+  sessionNoMessages: "メッセージはまだありません",
+  sessionTurn: "ターン",
+  sessionTurns: "ターン",
+  showInTranscript: "文字起こしで表示",
+  sessionClose: "セッションを閉じる",
+  recordMeeting: "会議を録音",
+  recordingLive: "録音中",
+  greetMorning: "おはようございます",
+  greetAfternoon: "こんにちは",
+  greetEvening: "こんばんは",
+  chatReplyPlaceholder: "返信…",
+  chatCommandsButton: "コマンド",
+  contextUsed: "コンテキスト使用率 {p}%",
+  contextAutoCompact: "80% で自動的に圧縮されます",
+  compactNow: "今すぐ圧縮",
+  sidebarToggle: "サイドバーの表示切替",
+  panelClose: "パネルを閉じる",
+  shortcutNewSession: "新しいセッション",
+  chatDisclaimer: "koe はツールを実際に実行します。結果は必ず確認してください。",
+  chatConnectionLost: "接続が切れました。次のメッセージは新しい会話として始まり、これまでの内容は引き継がれません。",
+  toolRead: "読み込み",
+  toolList: "一覧",
+  toolSearch: "検索",
+  toolGlob: "ファイル検索",
+  toolWrite: "書き込み",
+  toolEdit: "編集",
+  toolRun: "実行",
+  toolTerminal: "ターミナル",
+  toolTranscript: "文字起こしを参照",
+  toolMinutes: "議事録を参照",
   chatSuggest1: "この会議を要約して",
   chatSuggest2: "決定事項と担当者を一覧にして",
   chatSuggest3: "このリポジトリの構成を説明して",
@@ -440,33 +480,19 @@ const JA: Strings = {
   chatHintBusy: "⏵⏵ 軌道修正モード — 入力は次のステップに反映",
   chatEscInterrupt: "Esc で中断",
   chatWorkedFor: "{t} 作業しました",
-  chatMoreLines: "… 他 {n} 行（クリックで展開）",
-  chatCollapse: "折りたたむ",
   chatCompacted: "コンテキストを圧縮しました",
   chatInterrupted: "ユーザーが中断しました",
   chatNoOutput: "（出力なし）",
-  sideSession: "セッション",
-  sideExplorer: "エクスプローラー",
-  sideOutline: "アウトライン",
-  sideHarness: "ハーネス",
-  outlineEmpty: "発言が記録されると、ここから各発言に移動できます。",
   harnessModel: "モデル",
-  harnessState: "状態",
   harnessContext: "コンテキスト",
   harnessTurns: "ターン",
   harnessToolCalls: "ツール呼び出し",
   harnessCompactions: "圧縮",
-  harnessCommands: "コマンド",
-  harnessIdle: "待機中",
-  harnessRunning: "実行中",
-  harnessHint: "エージェントの実行状況です。コンテキストが 80% を超えると、古い会話が要約されます。",
+  harnessHint: "コンテキストウィンドウの 80% を超えると、古い会話が要約されて空きが作られます。記録そのものは消えません。",
   shortcutSidebar: "サイドバーの表示切替",
-  shortcutPanel: "端末パネルの表示切替",
-  shortcutAgent: "エージェントへ移動 / 選択範囲を引用",
-  shortcutAgentPanel: "エージェントパネルの表示切替",
-  shortcutTabs: "タブの切り替え",
-  statusContext: "コンテキスト使用量",
-  resetLayout: "レイアウトを初期化",
+  shortcutPanel: "サイドパネルの表示切替",
+  shortcutAgent: "入力欄へ移動 / 選択範囲を引用",
+  shortcutTabs: "文字起こし・議事録・コード・端末を開く",
   chatPlaceholder: "この会議やコードについて質問してください",
   chatSend: "送信",
   chatSteer: "軌道修正",
@@ -720,13 +746,40 @@ const EN: Strings = {
   wsChat: "Chat",
   wsTerminal: "Terminal",
   wsCode: "Code",
-  agentTitle: "Agent",
-  agentNew: "New conversation",
-  agentHide: "Hide panel",
-  chatWelcome: "Welcome to koe harness",
-  chatTip1: "/ for commands, ↑ for history",
-  chatTip2: "Type while it works — it lands at the next step",
-  chatTip3: "Select transcript text and press Ctrl+L to quote it",
+  newSession: "New session",
+  sessionsHeading: "Sessions",
+  sessionUntitled: "New session",
+  sessionWorking: "Working…",
+  sessionNoMessages: "No messages yet",
+  sessionTurn: "turn",
+  sessionTurns: "turns",
+  showInTranscript: "Show in transcript",
+  sessionClose: "Close session",
+  recordMeeting: "Record a meeting",
+  recordingLive: "Recording",
+  greetMorning: "Good morning",
+  greetAfternoon: "Good afternoon",
+  greetEvening: "Good evening",
+  chatReplyPlaceholder: "Reply…",
+  chatCommandsButton: "Commands",
+  contextUsed: "{p}% of context used",
+  contextAutoCompact: "Compacts automatically at 80%",
+  compactNow: "Compact now",
+  sidebarToggle: "Toggle sidebar",
+  panelClose: "Close panel",
+  shortcutNewSession: "new session",
+  chatDisclaimer: "koe runs tools for real. Check what it did.",
+  chatConnectionLost: "Connection lost. Your next message starts a fresh conversation that does not remember this one.",
+  toolRead: "Read",
+  toolList: "Listed",
+  toolSearch: "Searched",
+  toolGlob: "Found files",
+  toolWrite: "Wrote",
+  toolEdit: "Edited",
+  toolRun: "Ran",
+  toolTerminal: "Terminal",
+  toolTranscript: "Read the transcript",
+  toolMinutes: "Read the minutes",
   chatSuggest1: "Summarize this meeting",
   chatSuggest2: "List the decisions and who owns them",
   chatSuggest3: "Explain how this repository is laid out",
@@ -734,33 +787,19 @@ const EN: Strings = {
   chatHintBusy: "⏵⏵ steer mode — what you type lands at the next step",
   chatEscInterrupt: "esc to interrupt",
   chatWorkedFor: "Worked for {t}",
-  chatMoreLines: "… +{n} lines (click to expand)",
-  chatCollapse: "collapse",
   chatCompacted: "Context compacted",
   chatInterrupted: "Interrupted by user",
   chatNoOutput: "(no output)",
-  sideSession: "Session",
-  sideExplorer: "Explorer",
-  sideOutline: "Outline",
-  sideHarness: "Harness",
-  outlineEmpty: "Once people speak, jump to any line from here.",
   harnessModel: "Model",
-  harnessState: "State",
   harnessContext: "Context",
   harnessTurns: "Turns",
   harnessToolCalls: "Tool calls",
   harnessCompactions: "Compactions",
-  harnessCommands: "Commands",
-  harnessIdle: "idle",
-  harnessRunning: "running",
-  harnessHint: "What the agent runtime is doing. Past 80% of the window, older conversation is summarized to make room.",
+  harnessHint: "Past 80% of the window, older conversation is summarized to make room. The record itself is kept.",
   shortcutSidebar: "toggle the sidebar",
-  shortcutPanel: "toggle the terminal panel",
-  shortcutAgent: "focus the agent / quote the selection",
-  shortcutAgentPanel: "toggle the agent panel",
-  shortcutTabs: "switch tabs",
-  statusContext: "context window in use",
-  resetLayout: "Reset layout",
+  shortcutPanel: "toggle the side panel",
+  shortcutAgent: "focus the composer / quote the selection",
+  shortcutTabs: "open transcript / minutes / code / terminal",
   chatPlaceholder: "Ask about this meeting, or about the code",
   chatSend: "Send",
   chatSteer: "Steer",

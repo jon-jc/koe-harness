@@ -277,6 +277,17 @@ export class SettingsDialog {
     // Escape and the backdrop close a <dialog> without going through the
     // Close button, so releasing the microphone hangs off the close event
     // rather than off the handler for one of the ways to trigger it.
+    // Escape closes it explicitly, not only natively: a <dialog>'s built-in
+    // Escape handling is skipped by some embedded webviews and synthesized
+    // input, and a modal that cannot be dismissed from the keyboard traps
+    // whoever opened it.
+    this.dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        this.dialog.close();
+      }
+    });
+
     this.dialog.addEventListener("close", () => void this.stopProbe());
 
     this.dialog.append(head, h("div", { class: "modal-split" }, this.nav, this.body), foot);
@@ -1508,6 +1519,16 @@ export class ShortcutsDialog {
     foot.append(h("div", { style: "flex:1" }), close);
     this.dialog.append(head, this.body, foot);
     document.body.append(this.dialog);
+    // Escape closes it explicitly, not only natively: a <dialog>'s built-in
+    // Escape handling is skipped by some embedded webviews and synthesized
+    // input, and a modal that cannot be dismissed from the keyboard traps
+    // whoever opened it.
+    this.dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        this.dialog.close();
+      }
+    });
   }
 
   setStrings(strings: Strings): void {
@@ -1519,11 +1540,11 @@ export class ShortcutsDialog {
     const grid = h("div", { class: "keys" });
     const rows: Array<[string, string]> = [
       ["Ctrl+K", s.paletteSearch],
+      ["Ctrl+Shift+O", s.shortcutNewSession],
+      ["Ctrl+L", s.shortcutAgent],
       ["Ctrl+B", s.shortcutSidebar],
       ["Ctrl+J", s.shortcutPanel],
-      ["Ctrl+L", s.shortcutAgent],
-      ["Ctrl+Shift+L", s.shortcutAgentPanel],
-      ["Ctrl+1…3", s.shortcutTabs],
+      ["Ctrl+1…4", s.shortcutTabs],
       ["Space", s.toggleRecord],
       ["/", s.shortcutSearch],
       [",", s.shortcutSettings],

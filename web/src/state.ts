@@ -85,14 +85,6 @@ export interface AppState {
   /** Transcript filter. Empty means show everything. */
   readonly query: string;
   readonly error: string | null;
-  /** How full the agent's context window is, 0..1. Drives the status bar. */
-  readonly contextPressure: number;
-  readonly contextTokens: number;
-  readonly contextWindow: number;
-  /** What the agent runtime is doing, for the harness sidebar. */
-  readonly agent: AgentActivity;
-  /** The slash commands the server says it has. */
-  readonly agentCommands: readonly SlashCommand[];
 }
 
 export interface AgentActivity {
@@ -120,11 +112,6 @@ export const IDLE_AGENT: AgentActivity = {
 };
 
 export const INITIAL: AppState = {
-  contextPressure: 0,
-  contextTokens: 0,
-  contextWindow: 0,
-  agent: IDLE_AGENT,
-  agentCommands: [],
   status: "idle",
   uiLang: "ja",
   asrLang: "ja",
