@@ -53,6 +53,13 @@
         <div class="sb-heading" id="t-sessions">セッション</div>
         <div class="session-list" id="session-list" role="list"></div>
 
+        <!-- Only when the installed app has a verified update waiting. -->
+        <button class="update-pill" id="update-pill" type="button" hidden>
+          <span class="update-dot" aria-hidden="true"></span>
+          <span class="update-text" id="update-pill-text">アップデートの準備完了</span>
+          <span class="update-action" id="update-pill-action">再起動</span>
+        </button>
+
         <div class="sb-foot">
           <div class="lang" role="radiogroup" aria-label="Language / 言語" id="ui-lang">
             <button class="lang-opt" type="button" role="radio" data-lang="ja"

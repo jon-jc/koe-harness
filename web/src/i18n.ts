@@ -131,6 +131,25 @@ export interface Strings {
   readonly sessionTurn: string;
   readonly sessionTurns: string;
   readonly showInTranscript: string;
+  readonly updateHeading: string;
+  readonly updateCurrent: string;
+  readonly updateChecked: string;
+  readonly updateChecking: string;
+  readonly updateDownloading: string;
+  readonly updateReady: string;
+  readonly updateApplying: string;
+  readonly updateError: string;
+  readonly updateIdle: string;
+  readonly updateDisabled: string;
+  readonly updateCheckNow: string;
+  readonly updateRestart: string;
+  readonly updateAuto: string;
+  readonly updateAutoHint: string;
+  readonly updateNotes: string;
+  readonly updateChannel: string;
+  readonly updatePill: string;
+  readonly updatePillAction: string;
+  readonly updateStopRecording: string;
   readonly sessionClose: string;
   readonly recordMeeting: string;
   readonly recordingLive: string;
@@ -447,6 +466,25 @@ const JA: Strings = {
   sessionTurn: "ターン",
   sessionTurns: "ターン",
   showInTranscript: "文字起こしで表示",
+  updateHeading: "アップデート",
+  updateCurrent: "最新版です",
+  updateChecked: "最終確認 {t}",
+  updateChecking: "アップデートを確認しています…",
+  updateDownloading: "{v} をダウンロードしています… {p}%",
+  updateReady: "{v} をインストールできます。",
+  updateApplying: "アップデートをインストールしています。koe は自動で再起動します。",
+  updateError: "アップデートできませんでした: {e}",
+  updateIdle: "起動後まもなく確認します",
+  updateDisabled: "自動アップデートはインストール版の koe でのみ動作します。",
+  updateCheckNow: "今すぐ確認",
+  updateRestart: "再起動してアップデート",
+  updateAuto: "アップデートを自動でインストールする",
+  updateAutoHint: "新しいリリースをバックグラウンドで取得し、公開された SHA-256 と照合してから、koe を閉じるときにインストールします。照合に失敗したファイルは実行されません。",
+  updateNotes: "リリースノート",
+  updateChannel: "ビルド",
+  updatePill: "アップデートの準備完了",
+  updatePillAction: "再起動",
+  updateStopRecording: "録音を停止してから再起動してください。",
   sessionClose: "セッションを閉じる",
   recordMeeting: "会議を録音",
   recordingLive: "録音中",
@@ -754,6 +792,25 @@ const EN: Strings = {
   sessionTurn: "turn",
   sessionTurns: "turns",
   showInTranscript: "Show in transcript",
+  updateHeading: "Updates",
+  updateCurrent: "koe is up to date",
+  updateChecked: "checked {t}",
+  updateChecking: "Checking for updates…",
+  updateDownloading: "Downloading {v}… {p}%",
+  updateReady: "{v} is ready to install.",
+  updateApplying: "Installing the update. koe will restart on its own.",
+  updateError: "Couldn't update: {e}",
+  updateIdle: "Checks shortly after launch",
+  updateDisabled: "Updates apply to the installed app, not to a source checkout.",
+  updateCheckNow: "Check now",
+  updateRestart: "Restart to update",
+  updateAuto: "Install updates automatically",
+  updateAutoHint: "New releases download in the background, are checked against their published SHA-256, and install when koe closes. A file that fails the check is never run.",
+  updateNotes: "Release notes",
+  updateChannel: "Build",
+  updatePill: "Update ready",
+  updatePillAction: "Restart",
+  updateStopRecording: "Stop recording before restarting to update.",
   sessionClose: "Close session",
   recordMeeting: "Record a meeting",
   recordingLive: "Recording",

@@ -518,6 +518,81 @@ input {
   border-block-start: 1px solid var(--border);
 }
 
+/* The update button sits above the footer, where a finished download waits
+   to be noticed without interrupting anything. */
+.update-pill {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-block-start: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.update-pill:hover {
+  border-color: var(--accent);
+}
+
+.update-pill:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.update-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.update-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-action {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.update-line {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.update-line.bad {
+  color: var(--danger);
+}
+
+.update-progress {
+  height: 6px;
+  margin: 8px 0;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.update-progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 300ms ease;
+}
+
 /* ------------------------------------------------------------ splitters */
 
 /* A 1px line with a wider invisible grab area: a splitter you can see is a

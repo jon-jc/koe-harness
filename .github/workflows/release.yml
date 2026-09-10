@@ -1,27 +1,40 @@
-# Publish the desktop installer as a downloadable release asset.
+# Publish a release on every merge to main.
 #
-# CI already builds the installer on every pull request, but it uploads it as a
-# workflow *artifact* — which is a zip, expires after 14 days, and requires a
-# GitHub login to download. That is a fine build check and a useless
-# distribution channel: for anyone who is not signed in, the "installable .exe"
-# effectively does not exist. This workflow is the distribution channel.
+# Installed copies update themselves by reading the newest release's
+# `latest.json` (src/koe/desktop/updater.py). So "every merge publishes a
+# release" is what makes "the installed app updates when a PR is merged" true:
+# a merge is a push to main, and this workflow turns that push into a
+# versioned, verified installer plus the manifest that points at it.
 #
-# Triggered by a `v*` tag, or manually against any ref for a dry run.
+# Versions are MAJOR.MINOR from pyproject, and PATCH is the number of commits
+# on main. Pull requests are squash-merged, so that count rises by exactly one
+# per merge: monotonic, reproducible from the repository alone, and needing no
+# counter stored anywhere else.
+#
+# Also runnable by hand against any ref as a dry run, which builds everything
+# and publishes nothing.
 
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Build the installer but do not publish a release"
+        description: "Build the installer and manifest but do not publish a release"
         type: boolean
         default: true
 
 permissions:
   contents: write # required to create the release
+
+# One release at a time, in merge order. Cancelling an in-progress release for
+# a newer one would be tidy, but a queued run is cheap and a skipped version is
+# a question someone eventually has to answer.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   installer:
@@ -29,6 +42,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version is the commit count, which needs the history.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -42,6 +58,20 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          base=$(sed -nE 's/^version = "([0-9]+\.[0-9]+)\.[0-9]+"$/\1/p' pyproject.toml | head -n1)
+          if [ -z "$base" ]; then
+            echo "could not read MAJOR.MINOR from pyproject.toml" >&2
+            exit 1
+          fi
+          count=$(git rev-list --count HEAD)
+          version="$base.$count"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "koe $version ($GITHUB_SHA)"
+
       - name: Install
         run: pip install -e ".[api,llm,ja,cli,desktop,build]"
 
@@ -52,12 +82,16 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
-      - name: Build application and installer
+      - name: Build application, installer and manifest
         # build.py launches the frozen exe headless and asserts it serves
-        # /health and transcribes a meeting before the installer is compiled.
-        # A release that ships a binary which dies on launch is the failure
-        # this is here to prevent.
-        run: python packaging/build.py --installer
+        # /health, transcribes a meeting, and serves the client before the
+        # installer is compiled. A release that ships a binary which dies on
+        # launch is the failure this is here to prevent — and with automatic
+        # updates, such a release would install itself everywhere.
+        env:
+          KOE_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          KOE_BUILD_CHANNEL: release
+        run: python packaging/build.py --installer --manifest
 
       - name: Verify the checksum matches the artifact
         shell: pwsh
@@ -70,28 +104,53 @@ jobs:
           }
           "$name  $actual"
 
+      - name: Verify the manifest describes the artifact
+        # Installed copies trust latest.json for the digest and size they check
+        # a download against, so a manifest that disagrees with the file it
+        # names would make every update fail verification. Caught here instead.
+        shell: pwsh
+        run: |
+          $manifest = Get-Content dist/latest.json -Raw | ConvertFrom-Json
+          $file = Get-Item "dist/$($manifest.installer.name)"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          if ($manifest.version -ne "${{ steps.version.outputs.version }}") {
+            throw "manifest version $($manifest.version) is not the build version"
+          }
+          if ($manifest.installer.sha256 -ne $hash) { throw "manifest digest does not match the installer" }
+          if ($manifest.installer.size -ne $file.Length) { throw "manifest size does not match the installer" }
+          if (-not $manifest.installer.url.StartsWith("https://github.com/${{ github.repository }}/releases/download/v$($manifest.version)/")) {
+            throw "manifest URL is not this release: $($manifest.installer.url)"
+          }
+          "latest.json -> $($manifest.installer.name)  $hash"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: koe-installer
+          name: koe-installer-${{ steps.version.outputs.version }}
           path: |
             dist/koe-setup-*.exe
             dist/SHA256SUMS.txt
+            dist/latest.json
           if-no-files-found: error
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: koe ${{ steps.version.outputs.version }}
+          make_latest: "true"
           files: |
             dist/koe-setup-*.exe
             dist/SHA256SUMS.txt
+            dist/latest.json
           generate_release_notes: true
           body: |
             ## Install
 
-            Download `koe-setup-*.exe` below and run it. The install is
-            per-user — no administrator rights, no UAC prompt.
+            Download `koe-setup-${{ steps.version.outputs.version }}.exe` below and run it. The
+            install is per-user — no administrator rights, no UAC prompt.
 
             **Windows will warn you before it runs.** The installer is not
             code-signed, so SmartScreen shows *"Windows protected your PC"*
@@ -108,6 +167,14 @@ jobs:
             ```
 
             and compare it with `SHA256SUMS.txt` below.
+
+            ## Updating
+
+            An installed koe keeps itself current: it notices a newer release,
+            downloads it in the background, checks it against the SHA-256 in
+            `latest.json`, and installs it when koe closes — or at once from
+            **Restart to update**. Nothing is installed that fails that check.
+            Turn it off in **Settings → About**.
 
             ### Prefer not to click through a SmartScreen warning?
 
