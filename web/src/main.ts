@@ -33,13 +33,14 @@ import "@xterm/xterm/css/xterm.css";
 import { AudioCapture, CaptureError } from "./audio";
 import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
-import { ChatPanel } from "./panels/chat";
+import { ChatPanel, compactNumber, type ContextGauge } from "./panels/chat";
 import { CodePanel } from "./panels/code";
 import { CommandPalette, type Command } from "./palette";
 import { PtyPanel } from "./panels/pty";
 import { TerminalPanel } from "./panels/terminal";
 import * as prefs from "./prefs";
 import { SettingsDialog, ShortcutsDialog, type SettingsHost } from "./settings";
+import { Shell } from "./shell";
 import {
   INITIAL,
   Store,
@@ -181,11 +182,36 @@ function loadTheme(): Theme {
   return "system";
 }
 
-/* ------------------------------------------------------------ workspaces */
+/* ------------------------------------------------------------- documents */
 
-type WorkspaceView = "meeting" | "chat" | "terminal" | "code";
+/**
+ * What the centre can show. Tabs rather than places: switching to the code
+ * keeps the transcript exactly where it was, and the agent never moves.
+ */
+type Doc = "transcript" | "analysis" | "code";
 
-const WORKSPACES: readonly WorkspaceView[] = ["meeting", "chat", "terminal", "code"];
+const DOCS: readonly Doc[] = ["transcript", "analysis", "code"];
+
+/** "12% · 3.4k/128k", or just the tokens when the window is unknown. */
+function contextLabel(state: {
+  contextTokens: number;
+  contextWindow: number;
+  contextPressure: number;
+}): string {
+  if (state.contextTokens <= 0) return "—";
+  if (state.contextWindow <= 0) return `${compactNumber(state.contextTokens)} tok`;
+  const percent = Math.round(state.contextPressure * 100);
+  return `${percent}% · ${compactNumber(state.contextTokens)}/${compactNumber(state.contextWindow)}`;
+}
+
+/** Pressure against the compaction threshold: amber is "soon", red is "now". */
+function pressureTone(pressure: number): string {
+  return pressure >= 0.8 ? "bad" : pressure >= 0.6 ? "warn" : "";
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
 
 /* ------------------------------------------------------------------ app */
 
@@ -194,7 +220,12 @@ class App {
   private client: StreamClient | null = null;
   private capture: AudioCapture | null = null;
   private prefs: prefs.Prefs = prefs.load();
-  private view: WorkspaceView = "meeting";
+  private doc: Doc = "transcript";
+  private codeLabel = "";
+  private readonly shell: Shell;
+  private outlineFor: readonly Utterance[] | null = null;
+  private outlineLang = "";
+  private harnessKey = "";
   private chat: ChatPanel | null = null;
   private terminal: TerminalPanel | null = null;
   private pty: PtyPanel | null = null;
@@ -218,7 +249,7 @@ class App {
     demoLabel: el<HTMLSpanElement>("demo-label"),
     statusChip: el<HTMLSpanElement>("status-chip"),
     speechChip: el<HTMLSpanElement>("speech-chip"),
-    backend: el<HTMLSpanElement>("backend"),
+    backend: el<HTMLSpanElement>("status-backend"),
     levelFill: el<HTMLDivElement>("level-fill"),
     transcript: el<HTMLDivElement>("transcript"),
     side: el<HTMLDivElement>("side"),
@@ -231,7 +262,26 @@ class App {
     settingsBtn: el<HTMLButtonElement>("settings"),
     helpBtn: el<HTMLButtonElement>("help"),
     tabs: el<HTMLDivElement>("tabs"),
-    rail: el<HTMLElement>("rail"),
+    tabbar: el<HTMLElement>("tabbar"),
+    crumbs: el<HTMLElement>("crumbs"),
+    statusRecord: el<HTMLButtonElement>("status-record"),
+    statusDot: el<HTMLElement>("status-dot"),
+    statusState: el<HTMLElement>("status-state"),
+    statusPanel: el<HTMLButtonElement>("status-panel"),
+    statusContext: el<HTMLButtonElement>("status-context"),
+    statusContextText: el<HTMLElement>("status-context-text"),
+    pressureFill: el<HTMLElement>("pressure-fill"),
+    statusCost: el<HTMLElement>("status-cost"),
+    statusModel: el<HTMLElement>("status-model"),
+    agentModel: el<HTMLElement>("agent-model"),
+    agentClear: el<HTMLButtonElement>("agent-clear"),
+    agentCollapse: el<HTMLButtonElement>("agent-collapse"),
+    panelClose: el<HTMLButtonElement>("panel-close"),
+    sidebarTitle: el<HTMLElement>("sidebar-title"),
+    outline: el<HTMLElement>("side-outline"),
+    harness: el<HTMLElement>("side-harness"),
+    cmdk: el<HTMLButtonElement>("cmdk"),
+    actSettings: el<HTMLButtonElement>("act-settings"),
     live: el<HTMLDivElement>("live-region"),
     search: el<HTMLDivElement>("search"),
     searchInput: el<HTMLInputElement>("search-input"),
@@ -254,6 +304,20 @@ class App {
 
   constructor() {
     applyTheme(this.theme);
+    this.shell = new Shell(el("workbench"), {
+      onResize: (region) => {
+        if (region === "sidebar") this.redrawCanvases();
+        if (region === "panel") this.pty?.refit();
+      },
+      onSide: (name) => this.onSide(name),
+    });
+    // Built at startup, not on first visit: the agent is a region that is
+    // always there, and a conversation should not reset because a tab did.
+    this.chat = new ChatPanel(el("view-chat"), strings(this.store.get().uiLang), this.notify, {
+      onContext: (gauge) => this.onContext(gauge),
+      onActivity: (agent) => this.store.set({ agent }),
+      onCommands: (commands) => this.store.set({ agentCommands: [...commands] }),
+    });
     this.bind();
     this.store.subscribe(() => this.render());
     this.render();
@@ -263,13 +327,11 @@ class App {
     void this.loadActiveModel();
     void this.loadTerminalCapabilities();
 
-    const redraw = () => {
-      this.levelStrip.render();
-      const state = this.store.get();
-      this.timeline.render(state.utterances, Math.max(state.durationS, 1));
-    };
+    const redraw = () => this.redrawCanvases();
     window.addEventListener("resize", redraw);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+    this.shell.showSide("session");
+    this.openDoc("transcript");
   }
 
   private get s(): Strings {
@@ -307,21 +369,43 @@ class App {
 
     this.refs.themeBtn.addEventListener("click", () => this.cycleTheme());
 
-    this.refs.rail.addEventListener("click", (event) => {
-      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
-      if (target) this.show(target.dataset.view as WorkspaceView);
+    this.refs.tabbar.addEventListener("click", (event) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-doc]");
+      if (target) this.openDoc(target.dataset.doc as Doc);
     });
 
-    // Arrow keys along the rail, which a vertical tablist has to support to
-    // be reachable without a mouse.
-    this.refs.rail.addEventListener("keydown", (event) => {
+    // Up and down along the activity rail, which a vertical tablist has to
+    // support to be reachable without a mouse.
+    el("activity").addEventListener("keydown", (event) => {
       const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
       if (step === 0) return;
       event.preventDefault();
-      const at = WORKSPACES.indexOf(this.view);
-      const next = WORKSPACES[(at + step + WORKSPACES.length) % WORKSPACES.length];
-      this.show(next);
-      el(`rail-${next}`).focus();
+      const buttons = [...el("activity").querySelectorAll<HTMLElement>("[data-side]")];
+      const at = buttons.findIndex((b) => b.dataset.side === this.shell.activeSide);
+      const next = buttons[(at + step + buttons.length) % buttons.length];
+      this.shell.show("sidebar", true);
+      this.shell.showSide(next.dataset.side ?? "session");
+      next.focus();
+    });
+
+    this.refs.statusRecord.addEventListener("click", () => void this.toggle());
+    this.refs.statusPanel.addEventListener("click", () => this.togglePanel());
+    this.refs.panelClose.addEventListener("click", () => this.shell.show("panel", false));
+    this.refs.agentCollapse.addEventListener("click", () => this.shell.show("agent", false));
+    this.refs.agentClear.addEventListener("click", () => this.chat?.clear());
+    this.refs.cmdk.addEventListener("click", () => this.palette.show());
+    this.refs.actSettings.addEventListener("click", () => void this.settings.open());
+    this.refs.statusContext.addEventListener("click", () => this.showSide("harness"));
+
+    this.refs.outline.addEventListener("click", (event) => {
+      const item = (event.target as HTMLElement).closest<HTMLElement>("[data-index]");
+      if (item) this.jumpTo(Number(item.dataset.index));
+    });
+    this.refs.harness.addEventListener("click", (event) => {
+      const item = (event.target as HTMLElement).closest<HTMLElement>("[data-command]");
+      if (!item) return;
+      this.shell.show("agent", true);
+      this.chat?.insert(`/${item.dataset.command} `);
     });
 
     this.refs.settingsBtn.addEventListener("click", () => void this.settings.open());
@@ -379,12 +463,36 @@ class App {
         return;
       }
 
-      // Ctrl+1..4 jump between workspaces, the convention every tabbed
-      // application already taught people.
-      if ((event.ctrlKey || event.metaKey) && /^[1-4]$/.test(event.key)) {
+      const mod = event.ctrlKey || event.metaKey;
+
+      // Ctrl+1..3 switch tabs, the convention every tabbed application
+      // already taught people.
+      if (mod && !event.shiftKey && /^[1-3]$/.test(event.key)) {
         event.preventDefault();
-        this.show(WORKSPACES[Number(event.key) - 1]);
+        this.openDoc(DOCS[Number(event.key) - 1]);
         return;
+      }
+
+      // The editor chords. Checked before the typing guard for the same reason
+      // as the palette: they are how you get *out* of a text field.
+      if (mod && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === "b" && !event.shiftKey) {
+          event.preventDefault();
+          this.shell.toggle("sidebar");
+          return;
+        }
+        if ((key === "j" && !event.shiftKey) || event.key === "`") {
+          event.preventDefault();
+          this.togglePanel();
+          return;
+        }
+        if (key === "l") {
+          event.preventDefault();
+          if (event.shiftKey) this.shell.toggle("agent");
+          else this.focusAgent();
+          return;
+        }
       }
 
       const typing = isTyping();
@@ -503,35 +611,99 @@ class App {
   }
 
   /**
-   * Switch workspace.
+   * Show one document in the centre.
    *
-   * Panels are built the first time they are shown rather than at startup:
-   * constructing a terminal on load would spawn a shell for someone who only
-   * wanted to record a meeting, and a file tree costs a request per directory.
+   * The code viewer is built the first time it is needed rather than at
+   * startup: its tree costs a request per directory for someone who only came
+   * to record a meeting.
    */
-  private show(view: WorkspaceView): void {
-    if (!WORKSPACES.includes(view)) return;
-    this.view = view;
+  private openDoc(doc: Doc): void {
+    if (!DOCS.includes(doc)) return;
+    this.doc = doc;
+    for (const name of DOCS) el(`doc-${name}`).hidden = name !== doc;
+    if (doc === "code") this.ensureCode();
+    this.renderTabs();
+    this.renderCrumbs();
+  }
 
-    for (const name of WORKSPACES) {
-      el(`view-${name}`).hidden = name !== view;
-      const button = el(`rail-${name}`);
-      const on = name === view;
-      button.classList.toggle("on", on);
-      button.setAttribute("aria-selected", String(on));
-      button.tabIndex = on ? 0 : -1;
-    }
-
-    const s = this.s;
-    if (view === "chat") {
-      this.chat ??= new ChatPanel(el("view-chat"), s, this.notify);
-      this.chat.focus();
-    } else if (view === "terminal") {
-      this.openTerminal();
-    } else if (view === "code") {
-      this.code ??= new CodePanel(el("view-code"), s, this.notify);
+  private ensureCode(): CodePanel {
+    if (!this.code) {
+      this.code = new CodePanel(
+        { tree: el("side-explorer"), view: el("doc-code") },
+        this.s,
+        this.notify,
+        {
+          onOpen: (label) => {
+            this.codeLabel = label;
+            this.openDoc("code");
+          },
+        },
+      );
       void this.code.activate();
     }
+    return this.code;
+  }
+
+  private showSide(name: string): void {
+    this.shell.show("sidebar", true);
+    this.shell.showSide(name);
+  }
+
+  private onSide(name: string): void {
+    this.renderSidebarTitle();
+    if (name === "explorer") this.ensureCode();
+    // The session pane holds the canvases, which measure zero while hidden
+    // and have to be redrawn once they have a size again.
+    if (name === "session") requestAnimationFrame(() => this.redrawCanvases());
+    this.harnessKey = "";
+    this.renderOutline(true);
+    this.renderHarness();
+  }
+
+  /** ⌘J. The terminal is a panel you toggle, not a place you travel to. */
+  private togglePanel(): void {
+    const open = this.shell.toggle("panel");
+    this.refs.statusPanel.classList.toggle("on", open);
+    if (open) this.openTerminal();
+  }
+
+  /**
+   * ⌘L, as in Cursor: go to the agent, and bring any text selected elsewhere
+   * on the page with you as a quote.
+   */
+  private focusAgent(): void {
+    this.shell.show("agent", true);
+    const selection = window.getSelection();
+    const text = selection?.toString().trim() ?? "";
+    const anchor = selection?.anchorNode ?? null;
+    if (text && anchor && !el("agent").contains(anchor)) this.chat?.quote(text);
+    else this.chat?.focus();
+  }
+
+  /** From the outline to a line, with the landing made visible. */
+  private jumpTo(index: number): void {
+    this.openDoc("transcript");
+    const row = this.refs.transcript.querySelector<HTMLElement>(`[data-index="${index}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    row.classList.remove("flash");
+    // Force a reflow, so jumping to the same line twice flashes twice.
+    void row.offsetWidth;
+    row.classList.add("flash");
+  }
+
+  private onContext(gauge: ContextGauge): void {
+    this.store.set({
+      contextTokens: gauge.total,
+      contextWindow: gauge.window,
+      contextPressure: gauge.pressure,
+    });
+  }
+
+  private redrawCanvases(): void {
+    this.levelStrip.render();
+    const state = this.store.get();
+    this.timeline.render(state.utterances, Math.max(state.durationS, 1));
   }
 
   private setLanguage(uiLang: UILang): void {
@@ -611,12 +783,21 @@ class App {
    * the app is no longer in.
    */
   private buildCommands(): void {
-    const go = (view: WorkspaceView) => () => this.show(view);
+    const side = (name: string) => () => this.showSide(name);
     const commands: Command[] = [
-      { id: "meeting", ja: "議事録を開く", en: "Go to Meeting", group: "workspace", hint: "Ctrl+1", run: go("meeting") },
-      { id: "chat", ja: "チャットを開く", en: "Go to Chat", group: "workspace", hint: "Ctrl+2", run: go("chat") },
-      { id: "terminal", ja: "端末を開く", en: "Go to Terminal", group: "workspace", hint: "Ctrl+3", run: go("terminal") },
-      { id: "code", ja: "コードを開く", en: "Go to Code", group: "workspace", hint: "Ctrl+4", run: go("code") },
+      { id: "transcript", ja: "文字起こしを表示", en: "Show the transcript", group: "view", hint: "Ctrl+1", run: () => this.openDoc("transcript") },
+      { id: "analysis", ja: "議事録を表示", en: "Show the minutes", group: "view", hint: "Ctrl+2", run: () => this.openDoc("analysis") },
+      { id: "code", ja: "コードを表示", en: "Show the code", group: "view", hint: "Ctrl+3", run: () => this.openDoc("code") },
+      { id: "sidebar", ja: "サイドバーの表示切替", en: "Toggle the sidebar", group: "view", hint: "Ctrl+B", run: () => void this.shell.toggle("sidebar") },
+      { id: "terminal", ja: "端末パネルの表示切替", en: "Toggle the terminal", group: "view", hint: "Ctrl+J", run: () => this.togglePanel() },
+      { id: "explorer", ja: "エクスプローラー", en: "Explorer", group: "view", run: side("explorer") },
+      { id: "outline", ja: "アウトライン", en: "Outline", group: "view", run: side("outline") },
+      { id: "reset-layout", ja: "レイアウトを初期化", en: "Reset layout", group: "view", run: () => (["sidebar", "agent", "panel"] as const).forEach((region) => this.shell.reset(region)) },
+
+      { id: "agent", ja: "エージェントに質問", en: "Ask the agent", group: "agent", hint: "Ctrl+L", run: () => this.focusAgent() },
+      { id: "agent-panel", ja: "エージェントパネルの表示切替", en: "Toggle the agent panel", group: "agent", hint: "Ctrl+Shift+L", run: () => void this.shell.toggle("agent") },
+      { id: "agent-new", ja: "新しい会話", en: "New conversation", group: "agent", run: () => this.chat?.clear() },
+      { id: "harness", ja: "ハーネスの状態", en: "Harness status", group: "agent", run: side("harness") },
 
       { id: "record", ja: "録音の開始・停止", en: "Start or stop recording", group: "meeting", hint: "Space", run: () => void this.toggle() },
       { id: "demo", ja: "デモを再生", en: "Play the demo meeting", group: "meeting", run: () => void this.startDemo() },
@@ -1022,6 +1203,11 @@ class App {
     this.renderTranscript(s);
     this.renderSide(s);
     this.renderStats(s);
+    this.renderStatusBar(s);
+    this.renderCrumbs();
+    this.renderOutline();
+    this.renderHarness();
+    this.refs.agentModel.textContent = state.agent.model || state.activeLlm || "—";
     this.timeline.render(state.utterances, Math.max(state.durationS, 1));
 
     // One notification per distinct error, not one per render — the store
@@ -1046,18 +1232,25 @@ class App {
     this.refs.uiLang.setAttribute("aria-label", `${s.language} / Language`);
     el("t-asr-lang").textContent = s.asrLanguage;
     el("t-tagline").textContent = s.tagline;
-    el("t-hint").replaceChildren(h("kbd", { text: "Space" }), ` ${s.toggleRecord}`);
-
-    const railLabels: Record<WorkspaceView, string> = {
-      meeting: s.wsMeeting,
-      chat: s.wsChat,
-      terminal: s.wsTerminal,
-      code: s.wsCode,
+    el("t-agent").textContent = s.agentTitle;
+    this.refs.agentClear.title = s.agentNew;
+    this.refs.agentClear.setAttribute("aria-label", s.agentNew);
+    this.refs.agentCollapse.title = s.agentHide;
+    this.refs.agentCollapse.setAttribute("aria-label", s.agentHide);
+    this.refs.statusContext.title = s.statusContext;
+    const activity: Record<string, string> = {
+      "act-session": s.sideSession,
+      "act-explorer": s.sideExplorer,
+      "act-outline": s.sideOutline,
+      "act-harness": s.sideHarness,
+      "act-settings": s.settings,
     };
-    for (const name of WORKSPACES) {
-      const label = el(`rail-${name}`).querySelector(".rail-label");
-      if (label) label.textContent = railLabels[name];
+    for (const [id, label] of Object.entries(activity)) {
+      el(id).title = label;
+      el(id).setAttribute("aria-label", label);
     }
+    this.renderSidebarTitle();
+    this.renderTabs();
     this.palette.setStrings(s);
     this.buildCommands();
     this.chat?.setStrings(s);
@@ -1121,6 +1314,7 @@ class App {
 
       const speaker = utterance.speaker || "—";
       const row = h("div", { class: "utt" });
+      row.dataset.index = String(index);
       row.style.setProperty("--spk", `var(--spk-${speakerColorIndex(speaker)})`);
       // Dimmed rather than removed: a transcript is a sequence, and dropping
       // the misses would hide that a match sits between two other exchanges.
@@ -1460,6 +1654,216 @@ class App {
       t2.append(b2);
       host.append(t2);
     }
+  }
+
+  private renderSidebarTitle(): void {
+    const s = this.s;
+    const titles: Record<string, string> = {
+      session: s.sideSession,
+      explorer: s.sideExplorer,
+      outline: s.sideOutline,
+      harness: s.sideHarness,
+    };
+    this.refs.sidebarTitle.textContent = titles[this.shell.activeSide] ?? "";
+  }
+
+  /** The centre's tabs. Cheap enough to rebuild whenever what they say changes. */
+  private renderTabs(): void {
+    const s = this.s;
+    const tabs: Array<[Doc, string, string]> = [
+      ["transcript", "声", s.transcript],
+      ["analysis", "議", s.minutes],
+      ["code", "{}", this.codeLabel ? basename(this.codeLabel) : s.wsCode],
+    ];
+    this.refs.tabbar.replaceChildren(
+      ...tabs.map(([doc, icon, label], index) => {
+        const on = doc === this.doc;
+        const tab = h(
+          "button",
+          {
+            class: `tab${on ? " on" : ""}`,
+            type: "button",
+            role: "tab",
+            "data-doc": doc,
+            "aria-selected": String(on),
+            title: `${label} (Ctrl+${index + 1})`,
+          },
+          h("span", { class: "tab-icon", "aria-hidden": "true", text: icon }),
+          h("span", { text: label }),
+        );
+        tab.tabIndex = on ? 0 : -1;
+        return tab;
+      }),
+    );
+  }
+
+  /** Where you are: the session, and what the centre is showing of it. */
+  private renderCrumbs(): void {
+    const state = this.store.get();
+    const s = this.s;
+    const live = state.status === "live";
+    const status = live ? s.listening : state.status === "connecting" ? s.connecting : s.idle;
+    const doc =
+      this.doc === "transcript"
+        ? s.transcript
+        : this.doc === "analysis"
+          ? s.minutes
+          : this.codeLabel || s.wsCode;
+    const parts: Array<Node | string> = [
+      h("span", { text: "koe" }),
+      "›",
+      h("span", { text: status }),
+      "›",
+      h("b", { text: doc }),
+    ];
+    if (live || state.durationS > 0) {
+      parts.push("·", h("span", { class: "mono", text: fmtDuration(state.durationS) }));
+    }
+    this.refs.crumbs.replaceChildren(...parts);
+  }
+
+  /**
+   * The status bar: the session on the left, the harness on the right.
+   *
+   * Context pressure lives here because it is the number that explains both
+   * "why did it forget that" and "why is this costing so much", and until now
+   * it was reachable only by typing /context.
+   */
+  private renderStatusBar(s: Strings): void {
+    const state = this.store.get();
+    const live = state.status === "live";
+    this.refs.statusDot.className = `status-dot${live ? " live" : state.agent.busy ? " ok" : ""}`;
+    this.refs.statusState.textContent = live
+      ? `${s.listening} · ${fmtDuration(state.durationS)}`
+      : this.refs.statusChip.textContent || s.idle;
+    const cost = state.costUsd;
+    this.refs.statusCost.textContent = `$${cost.toFixed(cost > 0 && cost < 0.01 ? 4 : 2)}`;
+    this.refs.statusModel.textContent = state.agent.model || state.activeLlm || "—";
+
+    const pressure = Math.max(0, Math.min(1, state.contextPressure));
+    this.refs.pressureFill.style.width = `${(pressure * 100).toFixed(1)}%`;
+    this.refs.pressureFill.className = pressureTone(pressure);
+    this.refs.statusContextText.textContent = contextLabel(state);
+    this.refs.statusPanel.classList.toggle("on", this.shell.visible("panel"));
+  }
+
+  /** Every line, jumpable. Rebuilt only when the lines themselves change. */
+  private renderOutline(force = false): void {
+    if (this.shell.activeSide !== "outline") return;
+    const state = this.store.get();
+    if (!force && this.outlineFor === state.utterances && this.outlineLang === state.uiLang) return;
+    this.outlineFor = state.utterances;
+    this.outlineLang = state.uiLang;
+
+    const host = this.refs.outline;
+    if (state.utterances.length === 0) {
+      host.replaceChildren(h("p", { class: "note ja", text: this.s.outlineEmpty }));
+      return;
+    }
+    const list = h("div", { class: "outline-list" });
+    state.utterances.forEach((utterance, index) => {
+      const speaker = utterance.speaker || "—";
+      const item = h(
+        "button",
+        { class: "outline-item", type: "button", "data-index": String(index) },
+        h("span", { class: "outline-dot", "aria-hidden": "true" }),
+        h("span", { class: "outline-time", text: fmtDuration(utterance.start) }),
+        h(
+          "span",
+          { class: "outline-text ja" },
+          h("span", { class: "outline-speaker", text: speaker }),
+          utterance.text,
+        ),
+      );
+      item.style.setProperty("--spk", `var(--spk-${speakerColorIndex(speaker)})`);
+      list.append(item);
+    });
+    host.replaceChildren(list);
+  }
+
+  /** The harness, made visible: what the agent is doing and how full it is. */
+  private renderHarness(): void {
+    if (this.shell.activeSide !== "harness") return;
+    const state = this.store.get();
+    const key = JSON.stringify([
+      state.agent,
+      state.agentCommands.length,
+      state.contextTokens,
+      state.contextWindow,
+      state.uiLang,
+      state.activeLlm,
+    ]);
+    if (key === this.harnessKey) return;
+    this.harnessKey = key;
+
+    const s = this.s;
+    const agent = state.agent;
+    const pressure = Math.max(0, Math.min(1, state.contextPressure));
+    const fill = h("i", { class: pressureTone(pressure) });
+    fill.style.width = `${(pressure * 100).toFixed(1)}%`;
+
+    const facts = h("dl", { class: "kv" });
+    const fact = (label: string, value: string, tone = "") =>
+      facts.append(h("dt", { text: label }), h("dd", { class: tone, text: value }));
+    fact(s.harnessModel, agent.model || state.activeLlm || "—");
+    fact(
+      s.harnessState,
+      agent.busy ? `${s.harnessRunning} · ${s.chatStep} ${agent.step}` : s.harnessIdle,
+      agent.busy ? "busy" : "",
+    );
+    fact(s.harnessTurns, String(agent.turns));
+    fact(s.harnessToolCalls, String(agent.toolCalls));
+    fact(s.harnessCompactions, String(agent.compactions));
+
+    const sections: HTMLElement[] = [
+      h(
+        "div",
+        { class: "side-section" },
+        h("div", { class: "side-section-head", text: s.harnessContext }),
+        h(
+          "div",
+          {
+            class: "gauge",
+            role: "meter",
+            "aria-valuemin": "0",
+            "aria-valuemax": "100",
+            "aria-valuenow": String(Math.round(pressure * 100)),
+          },
+          fill,
+        ),
+        h(
+          "div",
+          { class: "gauge-caption" },
+          h("span", { text: contextLabel(state) }),
+          h("span", { text: "compact @ 80%" }),
+        ),
+      ),
+      h("div", { class: "side-section" }, facts),
+      h("p", { class: "note ja", text: s.harnessHint }),
+    ];
+
+    if (state.agentCommands.length > 0) {
+      const list = h("div", { class: "cmd-list" });
+      for (const command of state.agentCommands) {
+        list.append(
+          h(
+            "button",
+            { class: "cmd-item", type: "button", "data-command": command.name },
+            h("span", { class: "cmd-name", text: `/${command.name}` }),
+            h("span", { class: "cmd-summary", text: command.summary }),
+          ),
+        );
+      }
+      sections.push(
+        h(
+          "div",
+          { class: "side-section" },
+          h("div", { class: "side-section-head", text: s.harnessCommands }),
+          list,
+        ),
+      );
+    }
+    this.refs.harness.replaceChildren(...sections);
   }
 
   private renderStats(s: Strings): void {

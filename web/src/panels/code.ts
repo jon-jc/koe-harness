@@ -46,10 +46,16 @@ export class CodePanel {
   private loaded = false;
   private current = "";
 
+  /**
+   * The tree and the file live in different regions now: the tree in the
+   * sidebar, where an editor keeps it, and the file in the centre, where
+   * there is room to read it.
+   */
   constructor(
-    private readonly host: HTMLElement,
+    hosts: { tree: HTMLElement; view: HTMLElement },
     private strings: Strings,
     private readonly notify: Notifications,
+    private readonly events: { onOpen?: (label: string) => void } = {},
   ) {
     this.tree = h("div", { class: "tree", role: "tree" });
     this.view = h("div", { class: "code-view" });
@@ -64,15 +70,8 @@ export class CodePanel {
       if (event.key === "Enter") void this.grep(this.search.value.trim());
     });
 
-    this.host.append(
-      h(
-        "div",
-        { class: "code-side" },
-        h("div", { class: "code-side-head" }, this.search),
-        this.tree,
-      ),
-      this.view,
-    );
+    hosts.tree.append(h("div", { class: "code-side-head" }, this.search), this.tree);
+    hosts.view.append(this.view);
     this.renderEmpty();
   }
 
@@ -192,6 +191,7 @@ export class CodePanel {
 
     body.append(gutter, code);
     this.view.replaceChildren(head, body);
+    this.events.onOpen?.(file.path);
   }
 
   /* ---------------------------------------------------------------- search */
@@ -225,6 +225,7 @@ export class CodePanel {
         h("div", { class: "code-head" }, h("span", { class: "code-path", text: `${hits.length} ${this.strings.matches}` })),
         list,
       );
+      this.events.onOpen?.(`⌕ ${query}`);
     } catch {
       this.notify.error(this.strings.cannotConnect);
     }

@@ -308,7 +308,10 @@ class HarnessAgent:
         finally:
             outcome.duration_ms = (time.perf_counter() - started) * 1000.0
             self.session.append(TURN_END, {"turn": turn, "reason": outcome.reason})
-            await self._emit("turn/end", {"turn": turn, **outcome.to_dict()})
+            await self._emit(
+                "turn/end",
+                {"turn": turn, **outcome.to_dict(), "context": self.context_snapshot()},
+            )
             self._outcomes.append(outcome)
 
         # Another turn only if something is waiting for one. A fresh
@@ -357,8 +360,18 @@ class HarnessAgent:
             for call in reply.tool_calls
         ]
         for call in calls:
+            # With the arguments: "read_file" says a tool ran, "read_file(README.md)"
+            # says what it was asked to do, and only the second one lets someone
+            # watching catch a model reading the wrong file.
             await self._emit(
-                "tool/call", {"turn": turn, "step": step, "name": call.name, "id": call.id}
+                "tool/call",
+                {
+                    "turn": turn,
+                    "step": step,
+                    "name": call.name,
+                    "id": call.id,
+                    "arguments": call.arguments,
+                },
             )
 
         batch = await execute_tool_calls(
@@ -384,6 +397,7 @@ class HarnessAgent:
                     "ok": result.ok,
                     "content": result.content[:2000],
                     "error": result.error.value if result.error else None,
+                    "duration_ms": round(result.duration_ms, 1),
                 },
             )
 
@@ -454,6 +468,21 @@ class HarnessAgent:
                 await self._emit("compaction", {"turn": turn, "step": step, **result.to_dict()})
         except Exception:
             logger.exception("agent %s: compaction failed", self.id)
+
+    def context_snapshot(self) -> dict[str, Any] | None:
+        """How full the window is, sent with every turn end.
+
+        So a client can show pressure continuously instead of only when someone
+        thinks to type /context -- by which point the answer is usually "it
+        already forgot". None when measuring fails: a gauge is not worth ending
+        a turn over.
+        """
+        try:
+            measurement = self.compactor.meter.measure(self.session, schemas=self.tools.schemas())
+        except Exception:
+            logger.exception("agent %s: context measurement failed", self.id)
+            return None
+        return measurement.to_dict()
 
     def _accept_context(self, text: str) -> None:
         """Stage a tool's extra context for the next step.
