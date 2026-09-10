@@ -9,7 +9,7 @@
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![814 tests](https://img.shields.io/badge/tests-814-brightgreen)
+![838 tests](https://img.shields.io/badge/tests-838-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -107,6 +107,43 @@ Windows では、**画面全体またはブラウザのタブ**を共有した�
 2つの値を調整できます。既定値の解除を必須にしているのは意図的です。無音判定の
 時間は日本語のほうが英語より長く設定されており、値を送信すればそれを上書きして
 しまうためです。送信された値はサーバー側で範囲内に丸められます。
+
+### チャットはハーネスです
+
+ツールを後付けしたチャット画面ではありません。`src/koe/harness/` は
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）の
+中核部分を Python へ移植し、koe のカーネル上で再実装したものです。移植範囲の
+詳細は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+
+**会話は追記専用のログであり、メッセージ履歴はそこから導出されます。** 可変の
+リストではありません。この一点が他のすべてを可能にします。保留キューも同じログの
+畳み込みであり、キャンセル時には「ユーザーが実際に見た範囲」を記録する場所があり、
+「3ステップ目でモデルは何を見ていたか」に答えられます。
+
+**ターンはキャンセルではなく軌道修正できます。** 誤ったファイルを3回も読んでいる
+モデルに必要なのは、停止して指示し直すことではなく、作業中に「見る場所が違う」と
+伝えることです。実行中に入力すると **送信** が **軌道修正** に変わり、内容は次の
+ステップ境界で反映され、それまでの作業は保持されます。
+
+**ツール呼び出しは、安全だと宣言されているものだけ並列実行されます。** 読み取りは
+並列可、シェルコマンドは不可（バリアになります）。ディスパッチは重なりますが、
+結果のコミットは**モデルが並べた順**です。先に終わった読み取りも、モデルが前に
+並べた呼び出しの後にログへ入ります。導出される履歴がディスクの速度に依存せず、
+プロバイダのプレフィックスキャッシュも維持されます。
+
+**キャンセルしても履歴は壊れません。** 送信済みのテキストは interrupted として
+コミットされます。次のリクエストには、ユーザーが実際に見た内容が含まれている必要が
+あるからです。ディスパッチされなかった呼び出しには合成の
+`aborted before dispatch` 結果が付きます。結果のない呼び出しを含む
+アシスタントターンは各社の API が拒否するため、次のターンがキャンセルではなく
+履歴を理由に失敗してしまうからです。
+
+```
+turn/start → step/start → assistant/message → tool/call ×3 → tool/result ×3
+           → step/end   → step/start → assistant/message → step/end → turn/end
+```
+
+これらはすべてログ上のイベントであり、パネルは散文ではなく構造として描画します。
 
 ### 発話とドアの音を区別する
 

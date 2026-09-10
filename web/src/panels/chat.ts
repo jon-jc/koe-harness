@@ -35,8 +35,10 @@ export class ChatPanel {
   private readonly log: HTMLElement;
   private readonly input: HTMLTextAreaElement;
   private readonly send: HTMLButtonElement;
+  private readonly stop: HTMLButtonElement;
   private readonly status: HTMLElement;
   private busy = false;
+  private step = 0;
   private turn: HTMLElement | null = null;
   private readonly calls = new Map<string, ToolCallView>();
   private adapter = "";
@@ -62,10 +64,17 @@ export class ChatPanel {
       text: strings.chatSend,
     }) as HTMLButtonElement;
 
+    this.stop = h("button", {
+      class: "btn ghost chat-stop",
+      type: "button",
+      text: strings.chatStop,
+      hidden: "",
+    }) as HTMLButtonElement;
+
     this.bind();
     this.host.append(
       this.log,
-      h("div", { class: "chat-compose" }, this.input, this.send),
+      h("div", { class: "chat-compose" }, this.input, this.stop, this.send),
       this.status,
     );
     this.renderEmpty();
@@ -73,13 +82,15 @@ export class ChatPanel {
 
   setStrings(strings: Strings): void {
     this.strings = strings;
-    this.input.placeholder = strings.chatPlaceholder;
-    this.send.textContent = strings.chatSend;
+    this.input.placeholder = this.busy ? strings.chatSteerPlaceholder : strings.chatPlaceholder;
+    this.send.textContent = this.busy ? strings.chatSteer : strings.chatSend;
+    this.stop.textContent = strings.chatStop;
     if (this.log.querySelector(".empty")) this.renderEmpty();
   }
 
   private bind(): void {
     this.send.addEventListener("click", () => this.submit());
+    this.stop.addEventListener("click", () => this.cancel());
     this.input.addEventListener("keydown", (event) => {
       // Enter sends, Shift+Enter breaks the line. The opposite convention
       // exists, but every chat surface people already use works this way and
@@ -133,23 +144,48 @@ export class ChatPanel {
 
   private submit(): void {
     const text = this.input.value.trim();
-    if (!text || this.busy) return;
+    if (!text) return;
 
     this.input.value = "";
     this.input.style.height = "auto";
     if (this.log.querySelector(".empty")) this.log.replaceChildren();
 
-    this.append("user", text);
-    this.busy = true;
-    this.send.disabled = true;
-    this.status.textContent = this.strings.chatThinking;
-    this.turn = null;
-    this.calls.clear();
+    // While a turn is running the composer *steers* it rather than being
+    // locked out. That is the whole point of the harness inbox: a model three
+    // tool calls into the wrong file needs telling now, and cancelling to
+    // re-prompt throws away the work it has already done.
+    const steering = this.busy;
+    this.append(steering ? "steer" : "user", text);
+
+    if (!steering) {
+      this.setBusy(true);
+      this.status.textContent = this.strings.chatThinking;
+      this.turn = null;
+      this.step = 0;
+      this.calls.clear();
+    }
 
     const socket = this.connect();
-    const payload = JSON.stringify({ message: text });
+    const payload = JSON.stringify(steering ? { steer: text } : { message: text });
     if (socket.readyState === WebSocket.OPEN) socket.send(payload);
     else socket.addEventListener("open", () => socket.send(payload), { once: true });
+  }
+
+  /** Stop the running turn, keeping anything queued behind it. */
+  private cancel(): void {
+    if (!this.busy || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify({ cancel: true }));
+    this.status.textContent = this.strings.chatStopping;
+  }
+
+  /** One place that owns what the composer looks like in each state. */
+  private setBusy(busy: boolean): void {
+    this.busy = busy;
+    this.stop.hidden = !busy;
+    this.send.textContent = busy ? this.strings.chatSteer : this.strings.chatSend;
+    this.input.placeholder = busy
+      ? this.strings.chatSteerPlaceholder
+      : this.strings.chatPlaceholder;
   }
 
   private onMessage(event: MessageEvent): void {
@@ -173,6 +209,24 @@ export class ChatPanel {
         this.showAnswer(String(frame.text ?? ""));
         break;
 
+      case "step/start":
+        // The step counter is the harness made visible: a turn that takes six
+        // steps is doing six model calls, and a user watching a spinner has no
+        // way to tell that from one slow one.
+        this.step = Number(frame.step ?? 0);
+        if (this.busy) {
+          this.status.textContent = `${this.strings.chatThinking} · ${this.strings.chatStep} ${this.step}`;
+        }
+        break;
+
+      case "steered":
+        this.status.textContent = this.strings.chatSteered;
+        break;
+
+      case "cancelled":
+        this.notify.info(this.strings.chatStopped);
+        break;
+
       case "turn/end":
         this.finish(this.summarize(frame), false);
         break;
@@ -192,13 +246,17 @@ export class ChatPanel {
     if (calls > 0) parts.push(`${calls} ${calls === 1 ? s.chatToolCall : s.chatToolCalls}`);
     const ms = Number(frame.duration_ms ?? 0);
     parts.push(ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms.toFixed(0)}ms`);
+    // Only when it is not the ordinary one: "completed" on every turn is
+    // noise, "cancelled" or "max-steps" on one of them is the answer to why
+    // it stopped where it did.
+    const reason = String(frame.reason ?? "");
+    if (reason && reason !== "completed") parts.push(reason);
     if (this.adapter) parts.push(this.adapter);
     return parts.join("  ·  ");
   }
 
   private finish(status: string, failed: boolean): void {
-    this.busy = false;
-    this.send.disabled = false;
+    this.setBusy(false);
     this.status.textContent = status;
     this.status.classList.toggle("bad", failed);
     this.turn = null;
@@ -215,8 +273,20 @@ export class ChatPanel {
     return this.turn;
   }
 
-  private append(role: "user" | "assistant", text: string): HTMLElement {
+  /**
+   * A message in the log.
+   *
+   * `steer` is its own role rather than a user message with a flag, because it
+   * is a different thing to read: it joined a turn already in progress, so it
+   * appears *after* work the model had already done. Rendering it identically
+   * to a prompt would make the transcript look as though the user had been
+   * ignored for three tool calls.
+   */
+  private append(role: "user" | "assistant" | "steer", text: string): HTMLElement {
     const node = h("div", { class: `msg ${role}` });
+    if (role === "steer") {
+      node.append(h("span", { class: "msg-tag", text: this.strings.chatSteer }));
+    }
     node.append(h("div", { class: "msg-body ja", text }));
     this.log.append(node);
     this.scroll();

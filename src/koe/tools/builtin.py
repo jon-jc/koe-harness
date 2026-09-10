@@ -94,6 +94,10 @@ def workspace_tools(ctx: Any, config: Any = None) -> None:
     specs = [
         ToolSpec(
             name="list_files",
+            # Read-only, so it may overlap with its siblings in one step.
+            # The write tools below are deliberately not marked: an edit can
+            # change a file another call in the same step is reading.
+            parallel_safe=True,
             description=(
                 "List the files and directories at a path in the workspace. "
                 "Use it to orient yourself before reading. Build directories, "
@@ -114,6 +118,7 @@ def workspace_tools(ctx: Any, config: Any = None) -> None:
         ),
         ToolSpec(
             name="read_file",
+            parallel_safe=True,
             description=(
                 "Read a text file from the workspace, with line numbers. Pass "
                 "start_line and line_count for a window rather than reading a "
@@ -134,6 +139,7 @@ def workspace_tools(ctx: Any, config: Any = None) -> None:
         ),
         ToolSpec(
             name="glob_files",
+            parallel_safe=True,
             description=(
                 "Find files by name pattern, most recently modified first. Use "
                 "this when you know roughly what a file is called; use "
@@ -154,6 +160,7 @@ def workspace_tools(ctx: Any, config: Any = None) -> None:
         ),
         ToolSpec(
             name="grep_files",
+            parallel_safe=True,
             description=(
                 "Search file contents with a regular expression and return the "
                 "matching lines with their paths. Prefer this over reading "
@@ -313,6 +320,7 @@ def meeting_tools(ctx: Any, config: Any = None) -> None:
     specs = [
         ToolSpec(
             name="current_transcript",
+            parallel_safe=True,
             description=(
                 "The transcript of the meeting recorded in this session, with "
                 "speaker labels and timestamps. Empty until a recording has "
@@ -324,6 +332,7 @@ def meeting_tools(ctx: Any, config: Any = None) -> None:
         ),
         ToolSpec(
             name="current_minutes",
+            parallel_safe=True,
             description=(
                 "The generated 議事録 for this session: summary, decisions, and "
                 "action items, each with the transcript quote it was verified "

@@ -36,11 +36,13 @@ from pydantic import BaseModel, Field
 
 from koe import __version__
 from koe.agent import Conversation, adapter_for
+from koe.agent.loop import DEFAULT_SYSTEM
 from koe.api.demo import drive_demo, retime
 from koe.api.middleware import RequestContextMiddleware
 from koe.config import Settings, get_settings
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Segment, Transcript, attribute_speakers
+from koe.harness import AgentRegistry, HarnessAgent
 from koe.kernel.context import Context
 from koe.minutes.demo import demo_llm
 from koe.minutes.generator import MinutesGenerator
@@ -107,6 +109,8 @@ class Services:
     workspace: Workspace = field(default_factory=Workspace)
     #: Discovery and lifecycle for everything mounted on the kernel.
     plugins: PluginManager = field(init=False, repr=False)
+    #: Live harness agents. One per chat socket, disposed with it.
+    agents: AgentRegistry = field(default_factory=AgentRegistry, init=False, repr=False)
     #: The local backends most recently resolved, each with the sentence
     #: explaining the outcome. Cached rather than re-probed, so a credential
     #: change re-runs the policy without sweeping five ports again.
@@ -1137,37 +1141,94 @@ async def _pty_endpoint(websocket: WebSocket, services: Services) -> None:
 
 
 async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
-    """Drive conversations over one socket until the client goes away."""
+    """Drive one harness agent over a socket until the client goes away.
+
+    **The socket never blocks on a turn**, and that is the whole difference
+    between this and the chat it replaces. The old endpoint awaited
+    `conversation.send(text)`, so between asking and being answered it could
+    not hear anything — which meant the two things a person most wants while a
+    model is working, *stop* and *no, look over there*, were unreachable by
+    construction.
+
+    Here the receive loop only ever receives. Input is queued on the agent's
+    inbox and a driver task consumes it, so a frame arriving mid-turn is
+    ordinary rather than a race.
+
+    Four frames:
+
+    ``{"message": "..."}``  a prompt, taking its own turn
+    ``{"steer": "..."}``    join the running turn at its next step boundary
+    ``{"cancel": true}``    stop the current turn, keeping anything queued
+    ``{"sync": <seq>}``     replay session events after `seq`, for a reconnect
+    """
     await websocket.accept()
-    conversation: Any = None
+    handle: Any = None
+
+    async def emit(event: str, payload: dict[str, Any]) -> None:
+        await websocket.send_json({"type": event, **payload})
+
+    def build() -> Any:
+        agent = HarnessAgent(
+            adapter_for(services.llm),
+            services.tools,
+            system=DEFAULT_SYSTEM,
+            on_event=emit,
+        )
+        return services.agents.create(agent)
+
     try:
         while True:
             frame = await websocket.receive_json()
+
+            if frame.get("cancel"):
+                if handle is not None:
+                    # The inbox survives: someone who stops one answer usually
+                    # still wants the things they queued behind it.
+                    handle.agent.cancel("user", keep_inbox=True)
+                    await emit("cancelled", {"agent": handle.agent.id})
+                continue
+
+            if handle is not None and frame.get("sync") is not None:
+                since = int(frame.get("sync") or 0)
+                await emit(
+                    "session",
+                    {
+                        "session": handle.agent.session.id,
+                        "events": [e.to_dict() for e in handle.agent.session.since(since)],
+                        "last_seq": handle.agent.session.last_seq,
+                    },
+                )
+                continue
+
+            steer = str(frame.get("steer", "")).strip()
             text = str(frame.get("message", "")).strip()
-            if not text:
+            if not steer and not text:
                 await websocket.send_json({"type": "error", "message": "empty message"})
                 continue
 
-            if conversation is None or frame.get("reset"):
-                conversation = Conversation(adapter_for(services.llm), services.tools)
+            if handle is None or frame.get("reset"):
+                if handle is not None:
+                    handle.dispose()
+                handle = build()
+                await emit(
+                    "conversation",
+                    {
+                        "id": handle.agent.id,
+                        "session": handle.agent.session.id,
+                        "adapter": handle.agent.adapter.name,
+                    },
+                )
             else:
-                # Re-resolved per turn, so a key pasted mid-conversation takes
-                # effect on the next message rather than after a restart.
-                conversation.adapter = adapter_for(services.llm)
+                # Re-resolved per message, so a key pasted mid-conversation
+                # takes effect on the next turn rather than after a restart.
+                handle.agent.adapter = adapter_for(services.llm)
 
-            async def emit(event: str, payload: dict[str, Any]) -> None:
-                await websocket.send_json({"type": event, **payload})
-
-            await websocket.send_json(
-                {
-                    "type": "conversation",
-                    "id": conversation.id,
-                    "adapter": conversation.adapter.name,
-                }
-            )
-            result = await conversation.send(text, on_event=emit)
+            if steer:
+                handle.agent.steer(steer)
+                await emit("steered", {"text": steer, "turn": handle.agent.status["turn"]})
+            else:
+                handle.agent.followup(text)
             services.metrics.increment("chat.turns")
-            services.metrics.increment("chat.tool_calls", result.tool_calls)
     except WebSocketDisconnect:
         # The normal way a chat ends: the tab closed.
         return
@@ -1176,6 +1237,9 @@ async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
         with contextlib.suppress(Exception):
             await websocket.send_json({"type": "error", "message": "internal error"})
     finally:
+        if handle is not None:
+            with contextlib.suppress(Exception):
+                handle.dispose()
         with contextlib.suppress(Exception):
             await websocket.close()
 

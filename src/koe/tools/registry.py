@@ -136,6 +136,18 @@ class ToolSpec:
     #: Declares that this tool changes something outside the process. The
     #: registry does not act on it — a policy plugin does.
     dangerous: bool = False
+    #: Whether this tool may run at the same time as its siblings in one step.
+    #:
+    #: Off by default, and that default is the safe half of a decision only the
+    #: tool's author can make. A read is parallel-safe. A shell command is not:
+    #: it can change the working directory, write a file another call is
+    #: reading, or take a lock. The scheduler groups on this rather than
+    #: inferring from the name, because a tool that is wrong about it produces
+    #: a race that appears under load and not in a test.
+    #:
+    #: It is not model-visible. Whether two calls may overlap is a fact about
+    #: this process, not about the request, and the model has no use for it.
+    parallel_safe: bool = False
     #: Which plugin contributed it, for the settings UI and for teardown.
     source: str = "builtin"
 
