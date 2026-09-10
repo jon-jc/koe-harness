@@ -32,7 +32,16 @@ from dataclasses import dataclass, field
 
 from koe.text.script import Language, primary_language
 from koe.text.spacing import join_tokens
-from koe.text.tokenize import surfaces, tokenizer_for
+from koe.text.tokenize import CharacterTokenizer, surfaces, tokenizer_for
+
+
+def _word_level(language: Language) -> bool:
+    """Whether this language's tokenizer segments on word boundaries.
+
+    Cheap: `tokenizer_for` is memoized, so this is a dict lookup and an
+    attribute read rather than a tagger construction.
+    """
+    return tokenizer_for(language).name != CharacterTokenizer.name
 
 
 def _join(tokens: list[str], language: Language) -> str:
@@ -45,11 +54,12 @@ def _join(tokens: list[str], language: Language) -> str:
     turned the vocabulary correction "KPI dashboard" into "KPIdashboard" the
     first time one ran.
 
-    `language` is now only a tiebreak for the case the seam cannot settle
-    itself: two Latin tokens inside otherwise Japanese text still take a space,
-    because they are English words wherever they appear.
+    The reconstruction is only attempted when the tokenizer segmented on words.
+    Without MeCab the Japanese fallback is one token per character, which
+    destroys the evidence rather than merely omitting it -- see
+    :func:`koe.text.spacing.join_tokens`.
     """
-    return join_tokens(tokens, language)
+    return join_tokens(tokens, language, word_level=_word_level(language))
 
 
 @dataclass(frozen=True, slots=True)

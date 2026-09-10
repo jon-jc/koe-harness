@@ -109,6 +109,20 @@ def test_rejoining_japanese_tokens_stays_tight() -> None:
     assert join_tokens(["本日", "の", "議題"], Language.JA) == "本日の議題"
 
 
+def test_character_tokens_are_joined_tightly_whatever_script_they_are() -> None:
+    """Caught by CI's no-MeCab matrix leg, which the local run does not cover.
+
+    Without MeCab the Japanese fallback is one token per character, so "two
+    Latin tokens meet" becomes true between every pair of letters inside a
+    single word, and the word-level rule renders "KPI dashboard" as
+    "K P I d a s h b o a r d". The segmentation threw the spaces away and left
+    no boundary that means anything, so there is nothing to reconstruct from
+    and joining tightly is the honest answer.
+    """
+    characters = list("KPIdashboardは")
+    assert join_tokens(characters, Language.JA, word_level=False) == "KPIdashboardは"
+
+
 # --------------------------------------------------------------------------
 # vocabulary
 # --------------------------------------------------------------------------

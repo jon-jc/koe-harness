@@ -99,38 +99,45 @@ def join_all(fragments: Iterable[str]) -> str:
     return out
 
 
-def join_tokens(tokens: Iterable[str], language: Language) -> str:
+def join_tokens(tokens: Iterable[str], language: Language, *, word_level: bool = True) -> str:
     """Rejoin *tokenizer output*, which is a different problem from :func:`join`.
 
     :func:`join` sees two fragments a person actually said, and the space
-    between them is a fact about the text. Tokens are not that: a tokenizer has
-    already discarded the original spacing, so rejoining is reconstruction, and
-    reconstruction has to be conservative.
+    between them is a fact about the text. Tokens are not that: the tokenizer
+    has already discarded the original spacing, so this is reconstruction, and
+    reconstruction is only possible to the extent the segmentation preserved
+    the evidence.
 
-    English keeps ``" ".join``, because that is what the English tokenizer's
-    output is: words, one per token, that had spaces between them.
+    English keeps ``" ".join``, because that is exactly what its tokenizer's
+    output is: words that had spaces between them.
 
-    Japanese joins tightly **except where two Latin words meet**. That single
-    exception is the whole point: MeCab emits ``KPI`` and ``dashboard`` as
-    separate tokens with no record that a space stood between them, and joining
-    tightly gives ``KPIdashboard``. Anchoring the exception on *letters* rather
-    than on "not Japanese" is what keeps ``Q`` + ``3`` -- which MeCab also
-    splits, out of a string that never had a space in it -- from becoming
-    ``Q 3``. A digit is not a word.
+    Japanese joins tightly **except where two Latin words meet**. MeCab emits
+    ``KPI`` and ``dashboard`` as separate tokens with no record that a space
+    stood between them, and joining tightly gives ``KPIdashboard``. Anchoring
+    that exception on *letters* rather than on "not Japanese" is what keeps
+    ``Q`` + ``3`` -- which MeCab also splits, out of a string that never had a
+    space in it -- from becoming ``Q 3``. A digit is not a word.
+
+    ``word_level=False`` turns the exception off, and callers using a
+    character-granularity tokenizer must pass it. Under
+    :class:`~koe.text.tokenize.CharacterTokenizer` every token is one
+    character, so "two Latin tokens meet" is true between every pair of letters
+    in a word and the rule would render ``KPI dashboard`` as
+    ``K P I d a s h b o a r d``. There is nothing to reconstruct from in that
+    case: the segmentation threw the spaces away and left no boundary that
+    means anything. Joining tightly is the honest answer, and it is what koe
+    did everywhere before this function existed.
     """
-    parts = list(tokens)
+    parts = [part for part in tokens if part]
     if not parts:
         return ""
     if language is Language.EN:
         return " ".join(parts)
+    if not word_level:
+        return "".join(parts)
 
     out = parts[0]
     for part in parts[1:]:
-        if not part:
-            continue
-        if not out:
-            out = part
-            continue
         joiner = " " if _is_latin_letter(out[-1]) and _is_latin_letter(part[0]) else ""
         out = f"{out}{joiner}{part}"
     return out
