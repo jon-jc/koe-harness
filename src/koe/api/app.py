@@ -43,6 +43,8 @@ from koe.config import Settings, get_settings
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Segment, Transcript, attribute_speakers
 from koe.harness import AgentRegistry, HarnessAgent
+from koe.harness.profile import apply_profile
+from koe.harness.profile import load as load_profile
 from koe.harness.prompt import SystemPrompt
 from koe.kernel.context import Context
 from koe.minutes.demo import demo_llm
@@ -215,7 +217,33 @@ class Services:
             inject=("tools",),
         )
         self.plugins.discover()
+        self._apply_profile()
         self.plugins.activate_all()
+
+    def _apply_profile(self) -> None:
+        """Let a profile narrow or retune the built-in composition.
+
+        Applied after discovery and before activation, which is the only window
+        where a row can still change what starts. A missing profile is an empty
+        one: koe runs its built-in composition, and a profile only ever adjusts
+        it, so "no file" and "a file that changes nothing" behave the same.
+        """
+        from koe.desktop.paths import config_dir
+
+        try:
+            profile = load_profile(
+                config_dir() / "profile.toml",
+                patches=[config_dir() / "profile.patch.toml"],
+            )
+            if not len(profile):
+                return
+            for change in apply_profile(self.plugins, profile):
+                logger.info("profile: %s", change)
+        except Exception:
+            # A broken profile must not stop the process: koe's built-in
+            # composition is a working one, and starting with it plus a logged
+            # complaint beats refusing to start at all.
+            logger.exception("profile could not be applied; using the built-in composition")
 
     def _mount_prompt(self) -> None:
         """The sections koe always has, and the variables they reference.

@@ -25,8 +25,13 @@ from koe.desktop.settings import DesktopSettings, WindowState
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.real_user_paths
 def test_writable_dirs_are_not_next_to_the_executable() -> None:
-    """A packaged app may live in Program Files, which is read-only."""
+    """A packaged app may live in Program Files, which is read-only.
+
+    Opts out of the suite-wide config sandbox: this test is about where
+    the real directories are, so a redirected one proves nothing.
+    """
     for directory in (paths.config_dir(), paths.data_dir(), paths.log_dir()):
         assert directory.is_absolute()
         assert paths.APP_NAME in directory.parts

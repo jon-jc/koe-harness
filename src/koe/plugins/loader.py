@@ -65,6 +65,10 @@ class PluginRecord:
     active: bool = False
     #: Populated when import or activation failed. Non-empty means broken.
     error: str = ""
+    #: Declarative configuration for this plugin, from a profile. Passed to the
+    #: plugin's `apply(ctx, config)` on activation, so a composition can retune
+    #: a plugin without the code that mounts it knowing the setting exists.
+    config: dict[str, Any] = field(default_factory=dict)
     _apply: Any = field(default=None, repr=False)
     _fork: Any = field(default=None, repr=False)
 
@@ -225,7 +229,9 @@ class PluginManager:
             # called, so a plugin cannot appear twice under two names.
             spec.name = record.name
             spec.inject = record.inject or spec.inject
-            record._fork = self._ctx.plugin(spec)
+            # The profile's config reaches the plugin here, which is the only
+            # place that knows both the record and the fork being created.
+            record._fork = self._ctx.plugin(spec, record.config or None)
             record.active = True
             record.error = ""
         except Exception:
@@ -275,6 +281,10 @@ class PluginManager:
 
     def records(self) -> list[PluginRecord]:
         return sorted(self._records.values(), key=lambda r: (not r.builtin, r.name))
+
+    def record(self, name: str) -> PluginRecord | None:
+        """One plugin by name, for a composition setting its state."""
+        return self._records.get(name)
 
     def to_dict(self) -> dict[str, Any]:
         return {
