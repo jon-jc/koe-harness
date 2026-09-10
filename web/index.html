@@ -17,260 +17,216 @@
   </head>
   <body>
     <!--
-      A workbench, not a set of pages.
+      Laid out after Claude Code: sessions on the left, the conversation as the
+      page, and a side panel for what the conversation is about.
 
-      The layout it replaces made chat, terminal and code *mutually exclusive
-      views*: to ask the assistant about a transcript you had to navigate away
-      from the transcript. That is the wrong shape for a harness, and it is why
-      no editor is built that way. Here the agent is a persistent right-hand
-      panel, the terminal is a bottom panel you toggle rather than travel to,
-      and the centre keeps whatever you were reading.
+      The agent is the application rather than one view among four, because
+      everything else here is something you would ask it about. The transcript,
+      the 議事録, the code and a terminal open beside it instead of replacing it.
     -->
-    <div class="workbench" id="workbench">
-      <!-- ----------------------------------------------------- titlebar -->
-      <header class="titlebar">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">声</span>
-          <span class="brand-name">koe</span>
-          <span class="brand-kind" id="t-tagline">harness</span>
+    <div class="app" id="workbench">
+      <!-- ------------------------------------------------------- sidebar -->
+      <aside class="sidebar" id="sidebar" aria-label="sessions">
+        <div class="sb-head">
+          <div class="brand">
+            <span class="brand-mark" aria-hidden="true">声</span>
+            <span class="brand-name">koe</span>
+          </div>
+          <div class="grow"></div>
+          <button class="icon-btn ghost sm" id="sidebar-close" type="button" aria-label="sidebar" title="Ctrl+B">
+            <span data-icon="sidebar"></span>
+          </button>
         </div>
 
-        <!-- What this window is currently working on. In an editor this is the
-             file path; here it is the session, because that is the thing every
-             panel is a view onto. -->
-        <div class="crumbs" id="crumbs" aria-live="polite"></div>
+        <button class="new-session" id="new-session" type="button" title="Ctrl+Shift+O">
+          <span class="new-session-icon" data-icon="plus"></span>
+          <span id="t-new-session">新しいセッション</span>
+        </button>
 
-        <div class="titlebar-actions">
-          <!-- A two-state toggle rather than a dropdown. There are exactly two
-               languages and both fit, so a select costs a click and a menu to
-               show what a pair of buttons shows at rest. -->
+        <!-- Recording is the one thing koe does that no chat does, so it sits
+             beside "new session" rather than behind a panel. -->
+        <button class="sb-item" id="nav-record" type="button" title="Space">
+          <span class="sb-item-icon"><span class="rec-dot" aria-hidden="true"></span></span>
+          <span id="nav-record-label">会議を録音</span>
+        </button>
+
+        <div class="sb-heading" id="t-sessions">セッション</div>
+        <div class="session-list" id="session-list" role="list"></div>
+
+        <div class="sb-foot">
           <div class="lang" role="radiogroup" aria-label="Language / 言語" id="ui-lang">
             <button class="lang-opt" type="button" role="radio" data-lang="ja"
                     aria-checked="false" lang="ja">日本語</button>
             <button class="lang-opt" type="button" role="radio" data-lang="en"
                     aria-checked="false" lang="en">EN</button>
           </div>
-          <button class="icon-btn" id="cmdk" type="button" aria-label="コマンド" title="⌘K">
-            <span aria-hidden="true">⌘</span><span class="kbd-hint">K</span>
+          <div class="grow"></div>
+          <button class="icon-btn ghost" id="theme" type="button" aria-label="テーマ切替">
+            <span data-icon="contrast"></span>
           </button>
-          <button class="icon-btn" id="theme" type="button" aria-label="テーマ切替">◑</button>
-          <button class="icon-btn" id="settings" type="button" aria-label="設定">⚙</button>
-          <button class="icon-btn" id="help" type="button" aria-label="キーボードショートカット">?</button>
+          <button class="icon-btn ghost" id="help" type="button" aria-label="キーボードショートカット">
+            <span data-icon="help"></span>
+          </button>
+          <button class="icon-btn ghost" id="settings" type="button" aria-label="設定">
+            <span data-icon="settings"></span>
+          </button>
         </div>
-      </header>
+      </aside>
 
-      <div class="workbench-body">
-        <!-- ------------------------------------------------- activity -->
-        <nav class="activity" id="activity" role="tablist" aria-label="sidebar">
-          <button class="activity-item on" type="button" role="tab" data-side="session"
-                  aria-selected="true" id="act-session" title="議事録">
-            <span class="activity-icon" aria-hidden="true">声</span>
+      <div class="splitter" id="split-sidebar" role="separator" aria-orientation="vertical"
+           tabindex="0" aria-label="resize sidebar"></div>
+
+      <!-- ---------------------------------------------------------- main -->
+      <main class="main">
+        <header class="main-head">
+          <button class="icon-btn ghost sm" id="sidebar-open" type="button" hidden aria-label="sidebar" title="Ctrl+B">
+            <span data-icon="sidebar"></span>
           </button>
-          <button class="activity-item" type="button" role="tab" data-side="explorer"
-                  aria-selected="false" id="act-explorer" tabindex="-1" title="コード">
-            <span class="activity-icon" aria-hidden="true">{ }</span>
-          </button>
-          <button class="activity-item" type="button" role="tab" data-side="outline"
-                  aria-selected="false" id="act-outline" tabindex="-1" title="話者">
-            <span class="activity-icon" aria-hidden="true">☰</span>
-          </button>
-          <button class="activity-item" type="button" role="tab" data-side="harness"
-                  aria-selected="false" id="act-harness" tabindex="-1" title="ハーネス">
-            <span class="activity-icon" aria-hidden="true">◇</span>
+          <h1 class="session-title" id="session-title">新しいセッション</h1>
+          <div class="grow"></div>
+
+          <button class="rec-pill" id="rec-pill" type="button" hidden>
+            <span class="rec-dot live" aria-hidden="true"></span>
+            <span id="rec-pill-text">録音中</span>
           </button>
 
-          <div class="activity-spacer"></div>
+          <nav class="head-actions" aria-label="panels">
+            <button class="head-btn" type="button" data-panel="transcript">
+              <span data-icon="waveform"></span><span class="label">文字起こし</span>
+            </button>
+            <button class="head-btn" type="button" data-panel="analysis">
+              <span data-icon="minutes"></span><span class="label">議事録</span>
+            </button>
+            <button class="head-btn" type="button" data-panel="code">
+              <span data-icon="code"></span><span class="label">コード</span>
+            </button>
+            <button class="head-btn" type="button" data-panel="terminal">
+              <span data-icon="terminal"></span><span class="label">ターミナル</span>
+            </button>
+            <button class="head-btn" id="cmdk" type="button" title="Ctrl+K">
+              <span data-icon="search"></span><kbd class="kbd">Ctrl K</kbd>
+            </button>
+          </nav>
+        </header>
 
-          <button class="activity-item" type="button" id="act-settings" title="設定">
-            <span class="activity-icon" aria-hidden="true">⚙</span>
+        <!-- One view per session, mounted by the session manager. -->
+        <div class="sessions-host" id="sessions-host"></div>
+      </main>
+
+      <div class="splitter" id="split-panel" role="separator" aria-orientation="vertical"
+           tabindex="0" aria-label="resize panel"></div>
+
+      <!-- ---------------------------------------------------- side panel -->
+      <aside class="side-panel" id="panel" hidden aria-label="panel">
+        <header class="panel-head">
+          <span class="panel-icon" id="panel-icon"></span>
+          <span class="panel-title" id="panel-title">文字起こし</span>
+          <div class="grow"></div>
+          <button class="icon-btn ghost sm" id="panel-close" type="button" aria-label="閉じる" title="Ctrl+J">
+            <span data-icon="x"></span>
           </button>
-        </nav>
+        </header>
 
-        <!-- -------------------------------------------------- sidebar -->
-        <aside class="sidebar" id="sidebar" aria-label="sidebar">
-          <div class="sidebar-head">
-            <span class="sidebar-title" id="sidebar-title">議事録</span>
+        <!-- transcript -->
+        <section class="pane" id="doc-transcript">
+          <div class="pane-toolbar">
+            <button class="rec-btn" id="toggle" type="button" aria-pressed="false">
+              <span class="rec-dot" aria-hidden="true"></span>
+              <span id="toggle-label">録音開始</span>
+            </button>
+            <button class="btn ghost sm" id="demo" type="button">
+              <span id="demo-label">デモ再生</span>
+            </button>
+            <label class="sr-only" for="asr-lang" id="t-asr-lang">認識言語</label>
+            <select class="select sm" id="asr-lang">
+              <option value="ja" selected>日本語</option>
+              <option value="en">English</option>
+              <option value="unknown">自動判定</option>
+            </select>
             <div class="grow"></div>
-            <div class="sidebar-actions" id="sidebar-actions"></div>
+            <button class="icon-btn ghost sm" id="search-toggle" type="button"
+                    aria-label="検索" aria-controls="search" aria-expanded="false">
+              <span data-icon="search"></span>
+            </button>
+            <button class="icon-btn ghost sm" id="copy-transcript" type="button" aria-label="文字起こしをコピー">
+              <span data-icon="copy"></span>
+            </button>
           </div>
-          <div class="sidebar-body">
-            <!-- session: the recorder and what it is producing -->
-            <div class="side-pane" id="side-session">
-              <div class="record">
-                <button class="record-btn" id="toggle" type="button" aria-pressed="false">
-                  <span class="dot" aria-hidden="true"></span>
-                  <span id="toggle-label">録音開始</span>
-                </button>
-                <button class="btn ghost sm" id="demo" type="button">
-                  <span id="demo-label">デモ再生</span>
-                </button>
-              </div>
 
-              <div class="field">
-                <label class="field-label" for="asr-lang" id="t-asr-lang">認識言語</label>
-                <select class="select" id="asr-lang">
-                  <option value="ja" selected>日本語</option>
-                  <option value="en">English</option>
-                  <option value="unknown">自動判定</option>
-                </select>
-              </div>
-
-              <div class="meters">
-                <div class="meter-row">
-                  <span class="meter-label" id="t-level">入力レベル</span>
-                  <div class="level"><div class="level-fill" id="level-fill"></div></div>
-                </div>
-                <canvas class="strip" id="level-canvas" aria-hidden="true"></canvas>
-              </div>
-
-              <div class="chips">
-                <span class="chip" id="status-chip">待機中</span>
-                <span class="chip" id="speech-chip">無音</span>
-              </div>
-
-              <div class="side-section">
-                <div class="side-section-head" id="t-speakers">話者</div>
-                <canvas class="strip tall" id="timeline-canvas" aria-hidden="true"></canvas>
-              </div>
+          <div class="pane-meters">
+            <div class="meter-row">
+              <span class="meter-label" id="t-level">入力レベル</span>
+              <div class="level"><div class="level-fill" id="level-fill"></div></div>
             </div>
-
-            <!-- explorer: the workspace tree, mounted by the code panel -->
-            <div class="side-pane" id="side-explorer" hidden></div>
-
-            <!-- outline: jump points within the transcript -->
-            <div class="side-pane" id="side-outline" hidden></div>
-
-            <!-- harness: what the agent runtime is doing -->
-            <div class="side-pane" id="side-harness" hidden></div>
-          </div>
-        </aside>
-
-        <div class="splitter vertical" id="split-sidebar" role="separator"
-             aria-orientation="vertical" tabindex="0" aria-label="resize sidebar"></div>
-
-        <!-- --------------------------------------------------- centre -->
-        <main class="center" id="center">
-          <div class="tabbar" id="tabbar" role="tablist" aria-label="editor tabs"></div>
-
-          <div class="surface" id="surface">
-            <!-- transcript -->
-            <section class="doc" id="doc-transcript">
-              <div class="doc-head">
-                <span class="doc-title" id="t-transcript">文字起こし</span>
-                <div class="grow"></div>
-                <span class="note" id="stats"></span>
-                <button class="icon-btn sm" id="search-toggle" type="button"
-                        aria-label="検索" aria-controls="search" aria-expanded="false">⌕</button>
-                <button class="icon-btn sm" id="copy-transcript" type="button"
-                        aria-label="文字起こしをコピー">⧉</button>
-              </div>
-
-              <!-- Filtering rather than jump-to-next: in a meeting transcript
-                   the question is almost always "where was X discussed", and
-                   the non-matching lines are noise for that question. -->
-              <div class="search" id="search" hidden>
-                <input id="search-input" type="search" autocomplete="off"
-                       placeholder="文字起こしを検索" aria-label="文字起こしを検索" />
-                <span class="count" id="search-count" aria-live="polite"></span>
-                <button class="icon-btn sm" id="search-close" type="button" aria-label="閉じる">×</button>
-              </div>
-
-              <div class="doc-body" id="transcript"></div>
-            </section>
-
-            <!-- minutes / routing / metrics -->
-            <section class="doc" id="doc-analysis" hidden>
-              <div class="doc-head">
-                <div class="segmented" id="tabs" role="tablist">
-                  <button class="seg on" role="tab" data-tab="minutes" id="tab-minutes"
-                          aria-selected="true">議事録</button>
-                  <button class="seg" role="tab" data-tab="routing" id="tab-routing"
-                          aria-selected="false">ルーティング</button>
-                  <button class="seg" role="tab" data-tab="metrics" id="tab-metrics"
-                          aria-selected="false">メトリクス</button>
-                </div>
-              </div>
-              <div class="doc-body" id="side"></div>
-            </section>
-
-            <!-- code viewer -->
-            <section class="doc" id="doc-code" hidden></section>
-          </div>
-
-          <div class="splitter horizontal" id="split-panel" role="separator"
-               aria-orientation="horizontal" tabindex="0" aria-label="resize panel"></div>
-
-          <!-- The terminal is a panel you toggle, not a place you travel to.
-               ⌘J, as in every editor that has one. -->
-          <section class="panel" id="panel" hidden aria-label="terminal">
-            <div class="panel-head">
-              <div class="segmented" role="radiogroup" id="term-mode">
-                <button class="seg on" type="button" role="radio" data-mode="pty"
-                        aria-checked="true" id="term-mode-pty">対話</button>
-                <button class="seg" type="button" role="radio" data-mode="plain"
-                        aria-checked="false" id="term-mode-plain">簡易</button>
-              </div>
-              <span class="note" id="term-mode-hint"></span>
-              <div class="grow"></div>
-              <button class="icon-btn sm" id="panel-close" type="button" aria-label="閉じる">×</button>
+            <canvas class="strip" id="level-canvas" aria-hidden="true"></canvas>
+            <div class="chips">
+              <span class="chip" id="status-chip">待機中</span>
+              <span class="chip" id="speech-chip">無音</span>
+              <span class="chip mono" id="status-backend">—</span>
+              <span class="note" id="stats"></span>
             </div>
-            <div class="panel-body">
-              <div class="term-body" id="term-pty"></div>
-              <div class="term-body" id="term-plain" hidden></div>
+            <div class="speaker-row">
+              <span class="meter-label" id="t-speakers">話者</span>
+              <canvas class="strip tall" id="timeline-canvas" aria-hidden="true"></canvas>
             </div>
-          </section>
-        </main>
-
-        <div class="splitter vertical" id="split-agent" role="separator"
-             aria-orientation="vertical" tabindex="0" aria-label="resize agent panel"></div>
-
-        <!-- ---------------------------------------------------- agent -->
-        <!-- Persistent, and that is the whole point of the remake: asking the
-             assistant about a transcript should not mean navigating away from
-             the transcript. -->
-        <aside class="agent" id="agent" aria-label="agent">
-          <div class="agent-head">
-            <span class="agent-title" id="t-agent">エージェント</span>
-            <span class="badge" id="agent-model">—</span>
-            <div class="grow"></div>
-            <button class="icon-btn sm" id="agent-clear" type="button" aria-label="新しい会話">＋</button>
-            <button class="icon-btn sm" id="agent-collapse" type="button" aria-label="閉じる">›</button>
           </div>
-          <div class="agent-body" id="view-chat"></div>
-        </aside>
-      </div>
 
-      <!-- --------------------------------------------------- statusbar -->
-      <!-- The harness made visible. Context pressure is the number that
-           explains both "why did it forget" and "why is this costing so
-           much", and it was previously reachable only by typing /context. -->
-      <footer class="statusbar" id="statusbar">
-        <button class="status-item" id="status-record" type="button">
-          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
-          <span id="status-state">待機中</span>
-        </button>
-        <span class="status-item mono" id="status-backend">—</span>
+          <!-- Filtering rather than jump-to-next: in a meeting transcript the
+               question is almost always "where was X discussed". -->
+          <div class="search" id="search" hidden>
+            <input id="search-input" type="search" autocomplete="off"
+                   placeholder="文字起こしを検索" aria-label="文字起こしを検索" />
+            <span class="count" id="search-count" aria-live="polite"></span>
+            <button class="icon-btn sm" id="search-close" type="button" aria-label="閉じる">×</button>
+          </div>
 
-        <div class="grow"></div>
+          <div class="pane-body" id="transcript"></div>
+        </section>
 
-        <button class="status-item" id="status-panel" type="button" title="⌘J">
-          <span aria-hidden="true">▤</span>
-        </button>
-        <button class="status-item" id="status-context" type="button" title="context">
-          <span class="pressure" aria-hidden="true"><i id="pressure-fill"></i></span>
-          <span class="mono" id="status-context-text">—</span>
-        </button>
-        <span class="status-item mono" id="status-cost">$0.00</span>
-        <span class="status-item mono" id="status-model">mock</span>
-      </footer>
+        <!-- minutes / routing / metrics -->
+        <section class="pane" id="doc-analysis" hidden>
+          <div class="pane-toolbar">
+            <div class="segmented" id="tabs" role="tablist">
+              <button class="seg on" role="tab" data-tab="minutes" id="tab-minutes"
+                      aria-selected="true">議事録</button>
+              <button class="seg" role="tab" data-tab="routing" id="tab-routing"
+                      aria-selected="false">ルーティング</button>
+              <button class="seg" role="tab" data-tab="metrics" id="tab-metrics"
+                      aria-selected="false">メトリクス</button>
+            </div>
+          </div>
+          <div class="pane-body" id="side"></div>
+        </section>
+
+        <!-- code: tree above, file below -->
+        <section class="pane code-pane" id="doc-code" hidden>
+          <div class="code-tree-host" id="code-tree"></div>
+          <div class="code-view-host" id="code-view"></div>
+        </section>
+
+        <!-- terminal -->
+        <section class="pane" id="doc-terminal" hidden>
+          <div class="pane-toolbar">
+            <div class="segmented" role="radiogroup" id="term-mode">
+              <button class="seg on" type="button" role="radio" data-mode="pty"
+                      aria-checked="true" id="term-mode-pty">対話</button>
+              <button class="seg" type="button" role="radio" data-mode="plain"
+                      aria-checked="false" id="term-mode-plain">簡易</button>
+            </div>
+            <span class="note" id="term-mode-hint"></span>
+          </div>
+          <div class="pane-fill">
+            <div class="term-body" id="term-pty"></div>
+            <div class="term-body" id="term-plain" hidden></div>
+          </div>
+        </section>
+      </aside>
     </div>
 
     <!-- Final utterances are announced; interim hypotheses are not, because a
          screen reader re-reading a churning line is unusable. -->
     <div class="sr-only" id="live-region" role="status" aria-live="polite"></div>
 
-    <!-- A module, because the bundle is split: the terminal emulator is a
-         chunk this only fetches when someone opens that panel. -->
     <script type="module" src="/static/app.js"></script>
   </body>
 </html>

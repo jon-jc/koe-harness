@@ -1,91 +1,78 @@
 /**
- * The workbench: which regions exist, how big they are, and who has focus.
+ * The frame: sessions on the left, the conversation in the middle, and a side
+ * panel on the right for the things a conversation is about — the transcript,
+ * the 議事録, the code, a terminal.
  *
- * The layout this replaces made chat, terminal and code *mutually exclusive
- * views*. Asking the assistant about a transcript meant navigating away from
- * the transcript, and coming back meant losing where you were. No editor is
- * built that way, and the reason is that the panels are not alternatives to
- * each other — they are views onto one thing you are working on.
+ * The conversation is the application, so it is the only region without a
+ * size of its own: it gets whatever the other two leave, which is what makes
+ * "the conversation gets the room" true rather than a coincidence of
+ * flex-grow values.
  *
- * So: an activity rail chooses what the sidebar shows, the centre keeps
- * whatever you were reading, the terminal is a panel you toggle rather than
- * travel to, and the agent is always there on the right.
+ * **Sizes are the user's and they persist.** Someone who drags the panel wide
+ * has said something about how they work, and throwing that away on reload
+ * is the kind of small rudeness that makes an application feel like a page.
  *
- * **Sizes are the user's and they persist.** Someone who drags the agent panel
- * wide has said something about how they work, and throwing that away on
- * reload is the kind of small rudeness that makes an application feel like a
- * web page. Stored per region, restored before first paint.
- *
- * **Collapse is a toggle, not a drag to zero.** Dragging a panel to nothing
+ * **Collapse is a toggle, not a drag to zero.** Dragging a region to nothing
  * and being unable to find it again is the classic splitter failure; the
- * minimum width is enforced, and hiding is a separate, reversible action with
- * a keyboard shortcut and a status-bar button.
+ * minimum is enforced, and hiding is a separate, reversible action.
  *
- * **Dragging is pointer-capture, not mousemove-on-document.** Capture keeps
- * the drag working when the pointer crosses an iframe or leaves the window,
- * which is exactly when a naive implementation drops it and leaves the layout
- * stuck mid-resize.
+ * **Dragging is pointer capture, not mousemove on the document.** Capture
+ * keeps a drag alive when the pointer crosses the terminal's canvas or leaves
+ * the window — exactly where a naive implementation drops it mid-resize.
  */
 
-/** A resizable region. */
-export type Region = "sidebar" | "agent" | "panel";
+export type Region = "sidebar" | "panel";
 
-interface Geometry {
-  /** Pixels. Width for the side regions, height for the bottom panel. */
+export interface Geometry {
+  /** Width in pixels. */
   size: number;
   visible: boolean;
 }
 
-/** Enough that a panel is usable; below this it is a sliver nobody wants. */
-const MIN: Record<Region, number> = { sidebar: 200, agent: 300, panel: 120 };
+const REGIONS: readonly Region[] = ["sidebar", "panel"];
 
-/** Beyond this a region is eating the workspace it is supposed to serve. */
-const MAX_FRACTION: Record<Region, number> = { sidebar: 0.4, agent: 0.55, panel: 0.7 };
+/** Enough that a region is usable; below this it is a sliver nobody wants. */
+const MIN: Record<Region, number> = { sidebar: 220, panel: 360 };
+
+/** Beyond this a region is eating the conversation it is supposed to serve. */
+const MAX_FRACTION: Record<Region, number> = { sidebar: 0.35, panel: 0.62 };
 
 const DEFAULTS: Record<Region, Geometry> = {
-  sidebar: { size: 264, visible: true },
-  agent: { size: 400, visible: true },
-  // Hidden by default: a terminal is something you reach for, and opening the
-  // app with one already taking a third of the window presumes an answer.
-  panel: { size: 260, visible: false },
+  sidebar: { size: 268, visible: true },
+  // Closed at first: the panel is where the conversation goes to look at
+  // something, and opening onto one presumes what that is.
+  panel: { size: 520, visible: false },
 };
 
 /**
- * Below these widths a region overlays the centre instead of sitting beside
- * it, so on a first run it starts closed rather than covering the transcript.
+ * Below these widths a region overlays the conversation instead of sitting
+ * beside it, so on a first run it starts closed rather than covering it.
  * Only a default: once someone opens it, that choice is what persists.
  */
-const OVERLAY_BELOW: Record<Region, number> = { sidebar: 720, agent: 1100, panel: 0 };
+const OVERLAY_BELOW: Record<Region, number> = { sidebar: 760, panel: 1000 };
 
-const STORAGE_KEY = "koe.layout";
+const STORAGE_KEY = "koe.layout.v2";
 
 const CSS_VARIABLE: Record<Region, string> = {
   sidebar: "--sidebar-w",
-  agent: "--agent-w",
-  panel: "--panel-h",
+  panel: "--panel-w",
 };
 
 export interface ShellEvents {
-  /** A region changed size or visibility; panels that draw need to refit. */
-  onResize?: (region: Region) => void;
-  /** The sidebar's active section changed. */
-  onSide?: (name: string) => void;
+  /** A region changed size or visibility; anything that draws needs to refit. */
+  onResize?: (region: Region, geometry: Readonly<Geometry>) => void;
 }
 
 export class Shell {
-  private readonly root: HTMLElement;
   private readonly geometry: Record<Region, Geometry>;
-  private side = "session";
 
   constructor(
-    root: HTMLElement,
+    private readonly root: HTMLElement,
     private readonly events: ShellEvents = {},
   ) {
-    this.root = root;
     this.geometry = this.restore();
-    for (const region of ["sidebar", "agent", "panel"] as Region[]) this.apply(region);
+    for (const region of REGIONS) this.apply(region);
     this.bindSplitters();
-    this.bindActivity();
   }
 
   /* ------------------------------------------------------------ layout */
@@ -93,22 +80,38 @@ export class Shell {
   private restore(): Record<Region, Geometry> {
     const saved = readLayout();
     const out = {} as Record<Region, Geometry>;
-    for (const region of ["sidebar", "agent", "panel"] as Region[]) {
+    for (const region of REGIONS) {
       const entry = saved[region];
       out[region] = {
-        size: this.clamp(region, Number(entry?.size ?? DEFAULTS[region].size)),
-        visible:
-          typeof entry?.visible === "boolean"
+        size: Number(entry?.size ?? DEFAULTS[region].size),
+        // Below the overlay width a region starts closed whatever was saved:
+        // that choice was made where the region sat beside the conversation,
+        // and honouring it here covered the conversation on load.
+        visible: this.overlaid(region)
+          ? false
+          : typeof entry?.visible === "boolean"
             ? entry.visible
-            : DEFAULTS[region].visible && window.innerWidth >= OVERLAY_BELOW[region],
+            : DEFAULTS[region].visible,
       };
     }
     return out;
   }
 
   private persist(): void {
+    // Opening or closing an overlay is transient. Saving it would make a
+    // drawer closed on a phone-width window stay closed on the desktop.
+    const saved = readLayout();
+    const out = {} as Record<Region, Geometry>;
+    for (const region of REGIONS) {
+      out[region] = {
+        size: this.geometry[region].size,
+        visible: this.overlaid(region)
+          ? (saved[region]?.visible ?? DEFAULTS[region].visible)
+          : this.geometry[region].visible,
+      };
+    }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.geometry));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
     } catch {
       // Private browsing, or site data blocked: the layout still works, it
       // just starts from the defaults next time.
@@ -116,9 +119,8 @@ export class Shell {
   }
 
   private clamp(region: Region, size: number): number {
-    const extent = region === "panel" ? window.innerHeight : window.innerWidth;
-    const max = Math.max(MIN[region], extent * MAX_FRACTION[region]);
     if (!Number.isFinite(size)) return DEFAULTS[region].size;
+    const max = Math.max(MIN[region], window.innerWidth * MAX_FRACTION[region]);
     return Math.round(Math.min(max, Math.max(MIN[region], size)));
   }
 
@@ -126,19 +128,20 @@ export class Shell {
   private apply(region: Region): void {
     // Clamped here rather than when stored, so a window that shrinks and grows
     // back gets the size someone chose, not the one the small window forced.
-    const { visible } = this.geometry[region];
+    const visible = this.geometry[region].visible;
     const size = this.clamp(region, this.geometry[region].size);
-    this.root.style.setProperty(CSS_VARIABLE[region], `${size}px`);
+    // Zero when hidden, written inline. A `.no-panel { --panel-w: 0 }` rule
+    // cannot do it: an inline custom property beats any stylesheet rule, so a
+    // closed panel kept reserving its full width beside the conversation.
+    this.root.style.setProperty(CSS_VARIABLE[region], `${visible ? size : 0}px`);
     this.root.classList.toggle(`no-${region}`, !visible);
 
     const element = document.getElementById(region);
     if (element) element.hidden = !visible;
-    const splitter = document.getElementById(
-      region === "panel" ? "split-panel" : `split-${region}`,
-    );
+    const splitter = document.getElementById(`split-${region}`);
     if (splitter) splitter.hidden = !visible;
 
-    this.events.onResize?.(region);
+    this.events.onResize?.(region, { size, visible });
   }
 
   size(region: Region, size: number, persist = true): void {
@@ -149,6 +152,11 @@ export class Shell {
 
   visible(region: Region): boolean {
     return this.geometry[region].visible;
+  }
+
+  /** Whether the region currently covers the conversation rather than sitting beside it. */
+  overlaid(region: Region): boolean {
+    return window.innerWidth < OVERLAY_BELOW[region];
   }
 
   show(region: Region, visible = true): void {
@@ -173,44 +181,32 @@ export class Shell {
   /* --------------------------------------------------------- splitters */
 
   private bindSplitters(): void {
-    const pairs: [string, Region][] = [
-      ["split-sidebar", "sidebar"],
-      ["split-agent", "agent"],
-      ["split-panel", "panel"],
-    ];
-
-    for (const [id, region] of pairs) {
-      const splitter = document.getElementById(id);
+    for (const region of REGIONS) {
+      const splitter = document.getElementById(`split-${region}`);
       if (!splitter) continue;
+      // The panel is on the right, so the same drag means the opposite to it.
+      const direction = region === "panel" ? -1 : 1;
 
       splitter.addEventListener("pointerdown", (event) => {
         const pointer = event as PointerEvent;
         if (pointer.button !== 0) return;
         pointer.preventDefault();
-        // Capture, so the drag survives the pointer crossing the terminal's
-        // canvas or leaving the window — the two places a document-level
-        // mousemove listener silently stops receiving events.
         splitter.setPointerCapture(pointer.pointerId);
         splitter.classList.add("dragging");
         document.body.classList.add("resizing");
-        document.body.classList.toggle("rows", region === "panel");
 
-        const startPosition = region === "panel" ? pointer.clientY : pointer.clientX;
+        const startX = pointer.clientX;
         const startSize = this.geometry[region].size;
-        // The agent panel is on the right and the sidebar on the left, so the
-        // same drag direction means opposite things to them.
-        const direction = region === "agent" || region === "panel" ? -1 : 1;
 
         const move = (moveEvent: PointerEvent) => {
-          const now = region === "panel" ? moveEvent.clientY : moveEvent.clientX;
           // Stored once when the drag ends, not on every pointer move.
-          this.size(region, startSize + (now - startPosition) * direction, false);
+          this.size(region, startSize + (moveEvent.clientX - startX) * direction, false);
         };
         const end = () => {
           splitter.releasePointerCapture(pointer.pointerId);
           this.persist();
           splitter.classList.remove("dragging");
-          document.body.classList.remove("resizing", "rows");
+          document.body.classList.remove("resizing");
           splitter.removeEventListener("pointermove", move);
           splitter.removeEventListener("pointerup", end);
           splitter.removeEventListener("pointercancel", end);
@@ -221,7 +217,7 @@ export class Shell {
         splitter.addEventListener("pointercancel", end);
       });
 
-      // Double-click restores the shipped size. The standard escape from a
+      // Double-click restores the shipped size: the standard escape from a
       // layout someone has dragged into a corner.
       splitter.addEventListener("dblclick", () => this.reset(region));
 
@@ -229,61 +225,33 @@ export class Shell {
       // people have.
       splitter.addEventListener("keydown", (event) => {
         const key = (event as KeyboardEvent).key;
-        const step = (event as KeyboardEvent).shiftKey ? 48 : 12;
-        const grow = region === "panel" ? "ArrowUp" : "ArrowRight";
-        const shrink = region === "panel" ? "ArrowDown" : "ArrowLeft";
-        const sign = region === "agent" ? -1 : 1;
-
-        if (key === grow) this.size(region, this.geometry[region].size + step * sign);
-        else if (key === shrink) this.size(region, this.geometry[region].size - step * sign);
+        const step = ((event as KeyboardEvent).shiftKey ? 48 : 12) * direction;
+        if (key === "ArrowRight") this.size(region, this.geometry[region].size + step);
+        else if (key === "ArrowLeft") this.size(region, this.geometry[region].size - step);
         else if (key === "Enter" || key === " ") this.toggle(region);
         else return;
         event.preventDefault();
       });
     }
 
-    // A window that shrank can leave a region wider than the space it is in.
+    // A window that shrank can leave a region wider than the space it is in,
+    // and one that crossed an overlay width changes what a region is.
+    let width = window.innerWidth;
     window.addEventListener("resize", () => {
-      for (const region of ["sidebar", "agent", "panel"] as Region[]) this.apply(region);
-    });
-  }
-
-  /* ---------------------------------------------------------- activity */
-
-  private bindActivity(): void {
-    const rail = document.getElementById("activity");
-    rail?.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLElement>("[data-side]");
-      if (!button?.dataset.side) return;
-      // Clicking the section you are already in collapses the sidebar, which
-      // is what every editor does and what a second click on a chosen thing
-      // should mean.
-      if (button.dataset.side === this.side && this.visible("sidebar")) {
-        this.show("sidebar", false);
-        return;
+      const now = window.innerWidth;
+      for (const region of REGIONS) {
+        const threshold = OVERLAY_BELOW[region];
+        if (width >= threshold && now < threshold) {
+          // Narrowed into an overlay: close it, or it covers the conversation.
+          this.geometry[region].visible = false;
+        } else if (width < threshold && now >= threshold) {
+          // Widened out of one: back to whatever was chosen at this width.
+          this.geometry[region].visible = readLayout()[region]?.visible ?? DEFAULTS[region].visible;
+        }
+        this.apply(region);
       }
-      this.show("sidebar", true);
-      this.showSide(button.dataset.side);
+      width = now;
     });
-  }
-
-  /** Swap the sidebar's contents. */
-  showSide(name: string): void {
-    this.side = name;
-    for (const pane of document.querySelectorAll<HTMLElement>(".side-pane")) {
-      pane.hidden = pane.id !== `side-${name}`;
-    }
-    for (const button of document.querySelectorAll<HTMLElement>("[data-side]")) {
-      const on = button.dataset.side === name;
-      button.classList.toggle("on", on);
-      button.setAttribute("aria-selected", String(on));
-      button.tabIndex = on ? 0 : -1;
-    }
-    this.events.onSide?.(name);
-  }
-
-  get activeSide(): string {
-    return this.side;
   }
 }
 

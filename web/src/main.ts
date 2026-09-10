@@ -33,13 +33,14 @@ import "@xterm/xterm/css/xterm.css";
 import { AudioCapture, CaptureError } from "./audio";
 import { copyText, el, h } from "./dom";
 import { strings, type Strings, type UILang } from "./i18n";
-import { ChatPanel, compactNumber, type ContextGauge } from "./panels/chat";
+import { hydrateIcons, icon, type IconName } from "./icons";
 import { CodePanel } from "./panels/code";
 import { CommandPalette, type Command } from "./palette";
 import { PtyPanel } from "./panels/pty";
 import { TerminalPanel } from "./panels/terminal";
 import * as prefs from "./prefs";
 import { SettingsDialog, ShortcutsDialog, type SettingsHost } from "./settings";
+import { Sessions } from "./sessions";
 import { Shell } from "./shell";
 import {
   INITIAL,
@@ -182,32 +183,22 @@ function loadTheme(): Theme {
   return "system";
 }
 
-/* ------------------------------------------------------------- documents */
+/* ---------------------------------------------------------------- panels */
 
 /**
- * What the centre can show. Tabs rather than places: switching to the code
- * keeps the transcript exactly where it was, and the agent never moves.
+ * What the side panel can show. Opening one never replaces the conversation:
+ * the panel is where the conversation goes to look at something.
  */
-type Doc = "transcript" | "analysis" | "code";
+type PanelTab = "transcript" | "analysis" | "code" | "terminal";
 
-const DOCS: readonly Doc[] = ["transcript", "analysis", "code"];
+const PANEL_TABS: readonly PanelTab[] = ["transcript", "analysis", "code", "terminal"];
 
-/** "12% · 3.4k/128k", or just the tokens when the window is unknown. */
-function contextLabel(state: {
-  contextTokens: number;
-  contextWindow: number;
-  contextPressure: number;
-}): string {
-  if (state.contextTokens <= 0) return "—";
-  if (state.contextWindow <= 0) return `${compactNumber(state.contextTokens)} tok`;
-  const percent = Math.round(state.contextPressure * 100);
-  return `${percent}% · ${compactNumber(state.contextTokens)}/${compactNumber(state.contextWindow)}`;
-}
-
-/** Pressure against the compaction threshold: amber is "soon", red is "now". */
-function pressureTone(pressure: number): string {
-  return pressure >= 0.8 ? "bad" : pressure >= 0.6 ? "warn" : "";
-}
+const PANEL_ICONS: Record<PanelTab, IconName> = {
+  transcript: "waveform",
+  analysis: "minutes",
+  code: "code",
+  terminal: "terminal",
+};
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
@@ -220,13 +211,12 @@ class App {
   private client: StreamClient | null = null;
   private capture: AudioCapture | null = null;
   private prefs: prefs.Prefs = prefs.load();
-  private doc: Doc = "transcript";
+  private tab: PanelTab = "transcript";
   private codeLabel = "";
+  /** The language the labels were last rendered in; see renderLabels. */
+  private labelsLang = "";
   private readonly shell: Shell;
-  private outlineFor: readonly Utterance[] | null = null;
-  private outlineLang = "";
-  private harnessKey = "";
-  private chat: ChatPanel | null = null;
+  private readonly sessions: Sessions;
   private terminal: TerminalPanel | null = null;
   private pty: PtyPanel | null = null;
   private termMode: "pty" | "plain" = "pty";
@@ -253,7 +243,7 @@ class App {
     levelFill: el<HTMLDivElement>("level-fill"),
     transcript: el<HTMLDivElement>("transcript"),
     side: el<HTMLDivElement>("side"),
-    stats: el<HTMLDivElement>("stats"),
+    stats: el<HTMLElement>("stats"),
     asrLang: el<HTMLSelectElement>("asr-lang"),
     uiLang: el<HTMLElement>("ui-lang"),
     termMode: el<HTMLElement>("term-mode"),
@@ -262,26 +252,6 @@ class App {
     settingsBtn: el<HTMLButtonElement>("settings"),
     helpBtn: el<HTMLButtonElement>("help"),
     tabs: el<HTMLDivElement>("tabs"),
-    tabbar: el<HTMLElement>("tabbar"),
-    crumbs: el<HTMLElement>("crumbs"),
-    statusRecord: el<HTMLButtonElement>("status-record"),
-    statusDot: el<HTMLElement>("status-dot"),
-    statusState: el<HTMLElement>("status-state"),
-    statusPanel: el<HTMLButtonElement>("status-panel"),
-    statusContext: el<HTMLButtonElement>("status-context"),
-    statusContextText: el<HTMLElement>("status-context-text"),
-    pressureFill: el<HTMLElement>("pressure-fill"),
-    statusCost: el<HTMLElement>("status-cost"),
-    statusModel: el<HTMLElement>("status-model"),
-    agentModel: el<HTMLElement>("agent-model"),
-    agentClear: el<HTMLButtonElement>("agent-clear"),
-    agentCollapse: el<HTMLButtonElement>("agent-collapse"),
-    panelClose: el<HTMLButtonElement>("panel-close"),
-    sidebarTitle: el<HTMLElement>("sidebar-title"),
-    outline: el<HTMLElement>("side-outline"),
-    harness: el<HTMLElement>("side-harness"),
-    cmdk: el<HTMLButtonElement>("cmdk"),
-    actSettings: el<HTMLButtonElement>("act-settings"),
     live: el<HTMLDivElement>("live-region"),
     search: el<HTMLDivElement>("search"),
     searchInput: el<HTMLInputElement>("search-input"),
@@ -289,6 +259,18 @@ class App {
     searchClose: el<HTMLButtonElement>("search-close"),
     searchToggle: el<HTMLButtonElement>("search-toggle"),
     copyTranscript: el<HTMLButtonElement>("copy-transcript"),
+    newSession: el<HTMLButtonElement>("new-session"),
+    navRecord: el<HTMLButtonElement>("nav-record"),
+    navRecordLabel: el<HTMLElement>("nav-record-label"),
+    sidebarClose: el<HTMLButtonElement>("sidebar-close"),
+    sidebarOpen: el<HTMLButtonElement>("sidebar-open"),
+    sessionTitle: el<HTMLElement>("session-title"),
+    recPill: el<HTMLButtonElement>("rec-pill"),
+    recPillText: el<HTMLElement>("rec-pill-text"),
+    panelIcon: el<HTMLElement>("panel-icon"),
+    panelTitle: el<HTMLElement>("panel-title"),
+    panelClose: el<HTMLButtonElement>("panel-close"),
+    cmdk: el<HTMLButtonElement>("cmdk"),
   };
 
   private readonly notify = new Notifications(undefined, this.refs.live);
@@ -304,20 +286,35 @@ class App {
 
   constructor() {
     applyTheme(this.theme);
+    hydrateIcons(document);
     this.shell = new Shell(el("workbench"), {
-      onResize: (region) => {
-        if (region === "sidebar") this.redrawCanvases();
-        if (region === "panel") this.pty?.refit();
+      onResize: (region, geometry) => {
+        if (region === "sidebar") {
+          this.refs.sidebarOpen.hidden = geometry.visible;
+          return;
+        }
+        if (geometry.visible) {
+          // xterm and the canvases measure their containers, so a panel that
+          // changed width has to be redrawn at the width it now has.
+          this.pty?.refit();
+          this.redrawCanvases();
+        }
+        // Undefined only while the shell is still being constructed.
+        if (this.shell) this.renderPanelChrome();
       },
-      onSide: (name) => this.onSide(name),
     });
-    // Built at startup, not on first visit: the agent is a region that is
-    // always there, and a conversation should not reset because a tab did.
-    this.chat = new ChatPanel(el("view-chat"), strings(this.store.get().uiLang), this.notify, {
-      onContext: (gauge) => this.onContext(gauge),
-      onActivity: (agent) => this.store.set({ agent }),
-      onCommands: (commands) => this.store.set({ agentCommands: [...commands] }),
-    });
+    this.sessions = new Sessions(
+      el("sessions-host"),
+      el("session-list"),
+      strings(this.store.get().uiLang),
+      this.notify,
+      {
+        onChange: () => this.renderChrome(this.s),
+        onModelClick: () => void this.settings.open("models"),
+      },
+    );
+    this.sessions.create();
+
     this.bind();
     this.store.subscribe(() => this.render());
     this.render();
@@ -330,8 +327,7 @@ class App {
     const redraw = () => this.redrawCanvases();
     window.addEventListener("resize", redraw);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
-    this.shell.showSide("session");
-    this.openDoc("transcript");
+    this.showTab(this.tab);
   }
 
   private get s(): Strings {
@@ -343,6 +339,40 @@ class App {
   private bind(): void {
     this.refs.toggle.addEventListener("click", () => void this.toggle());
     this.refs.demo.addEventListener("click", () => void this.startDemo());
+    this.refs.navRecord.addEventListener("click", () => this.recordFromAnywhere());
+    this.refs.recPill.addEventListener("click", () => this.openPanel("transcript"));
+    this.refs.newSession.addEventListener("click", () => this.newSession());
+    this.refs.sidebarClose.addEventListener("click", () => this.shell.show("sidebar", false));
+    this.refs.sidebarOpen.addEventListener("click", () => this.shell.show("sidebar", true));
+
+    // An overlay closes when you press outside it, as a drawer does. Only as an
+    // overlay: beside the conversation a region is part of the layout, and a
+    // click in the conversation is not a request to put it away.
+    el("workbench").addEventListener("pointerdown", (event) => {
+      const target = event.target as HTMLElement;
+      if (
+        this.shell.overlaid("panel") &&
+        this.shell.visible("panel") &&
+        !el("panel").contains(target) &&
+        !target.closest(".head-btn, #rec-pill, #nav-record")
+      ) {
+        this.shell.show("panel", false);
+        this.renderPanelChrome();
+      }
+      if (
+        this.shell.overlaid("sidebar") &&
+        this.shell.visible("sidebar") &&
+        !el("sidebar").contains(target) &&
+        !target.closest("#sidebar-open")
+      ) {
+        this.shell.show("sidebar", false);
+      }
+    });
+    this.refs.panelClose.addEventListener("click", () => this.togglePanel());
+    this.refs.cmdk.addEventListener("click", () => this.palette.show());
+    for (const button of document.querySelectorAll<HTMLElement>(".head-btn[data-panel]")) {
+      button.addEventListener("click", () => this.togglePanel(button.dataset.panel as PanelTab));
+    }
 
     this.refs.asrLang.addEventListener("change", () => {
       this.store.set({ asrLang: this.refs.asrLang.value as ASRLang });
@@ -368,46 +398,6 @@ class App {
     });
 
     this.refs.themeBtn.addEventListener("click", () => this.cycleTheme());
-
-    this.refs.tabbar.addEventListener("click", (event) => {
-      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-doc]");
-      if (target) this.openDoc(target.dataset.doc as Doc);
-    });
-
-    // Up and down along the activity rail, which a vertical tablist has to
-    // support to be reachable without a mouse.
-    el("activity").addEventListener("keydown", (event) => {
-      const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
-      if (step === 0) return;
-      event.preventDefault();
-      const buttons = [...el("activity").querySelectorAll<HTMLElement>("[data-side]")];
-      const at = buttons.findIndex((b) => b.dataset.side === this.shell.activeSide);
-      const next = buttons[(at + step + buttons.length) % buttons.length];
-      this.shell.show("sidebar", true);
-      this.shell.showSide(next.dataset.side ?? "session");
-      next.focus();
-    });
-
-    this.refs.statusRecord.addEventListener("click", () => void this.toggle());
-    this.refs.statusPanel.addEventListener("click", () => this.togglePanel());
-    this.refs.panelClose.addEventListener("click", () => this.shell.show("panel", false));
-    this.refs.agentCollapse.addEventListener("click", () => this.shell.show("agent", false));
-    this.refs.agentClear.addEventListener("click", () => this.chat?.clear());
-    this.refs.cmdk.addEventListener("click", () => this.palette.show());
-    this.refs.actSettings.addEventListener("click", () => void this.settings.open());
-    this.refs.statusContext.addEventListener("click", () => this.showSide("harness"));
-
-    this.refs.outline.addEventListener("click", (event) => {
-      const item = (event.target as HTMLElement).closest<HTMLElement>("[data-index]");
-      if (item) this.jumpTo(Number(item.dataset.index));
-    });
-    this.refs.harness.addEventListener("click", (event) => {
-      const item = (event.target as HTMLElement).closest<HTMLElement>("[data-command]");
-      if (!item) return;
-      this.shell.show("agent", true);
-      this.chat?.insert(`/${item.dataset.command} `);
-    });
-
     this.refs.settingsBtn.addEventListener("click", () => void this.settings.open());
     this.refs.helpBtn.addEventListener("click", () => this.shortcuts.open());
 
@@ -432,7 +422,10 @@ class App {
 
     /* -- search ---------------------------------------------------------- */
 
-    this.refs.searchToggle.addEventListener("click", () => this.openSearch());
+    // A toggle: the same button that opened the filter closes it.
+    this.refs.searchToggle.addEventListener("click", () =>
+      this.refs.search.hidden ? this.openSearch() : this.closeSearch(),
+    );
     this.refs.searchClose.addEventListener("click", () => this.closeSearch());
     this.refs.searchInput.addEventListener("input", () => {
       this.store.set({ query: this.refs.searchInput.value });
@@ -449,62 +442,73 @@ class App {
     /* -- shortcuts ------------------------------------------------------- */
 
     document.addEventListener("keydown", (event) => {
-      // A modal owns the keyboard while it is open; the browser already gives
-      // it Escape and a focus trap, and a global handler firing behind it
-      // would act on a surface the user cannot see.
+      // A modal owns the keyboard while it is open; a global handler firing
+      // behind it would act on a surface the user cannot see.
       if (document.querySelector("dialog[open]")) return;
 
-      // Checked before the typing guard and before the modifier guard: a
-      // palette people can only reach with the caret outside a text field is
-      // one they stop reaching for.
-      if (event.key === "k" && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        this.palette.show();
-        return;
-      }
-
       const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
 
-      // Ctrl+1..3 switch tabs, the convention every tabbed application
-      // already taught people.
-      if (mod && !event.shiftKey && /^[1-3]$/.test(event.key)) {
-        event.preventDefault();
-        this.openDoc(DOCS[Number(event.key) - 1]);
-        return;
-      }
-
-      // The editor chords. Checked before the typing guard for the same reason
-      // as the palette: they are how you get *out* of a text field.
+      // The chords come before the typing guard: they are how you get *out*
+      // of a text field, and a shortcut that only works with the caret
+      // elsewhere is one people stop reaching for.
       if (mod && !event.altKey) {
-        const key = event.key.toLowerCase();
+        if (key === "k") {
+          event.preventDefault();
+          this.palette.show();
+          return;
+        }
+        if (!event.shiftKey && /^[1-4]$/.test(event.key)) {
+          event.preventDefault();
+          this.togglePanel(PANEL_TABS[Number(event.key) - 1]);
+          return;
+        }
         if (key === "b" && !event.shiftKey) {
           event.preventDefault();
           this.shell.toggle("sidebar");
           return;
         }
-        if ((key === "j" && !event.shiftKey) || event.key === "`") {
+        if (key === "j" && !event.shiftKey) {
           event.preventDefault();
           this.togglePanel();
           return;
         }
-        if (key === "l") {
+        if (event.key === "`") {
           event.preventDefault();
-          if (event.shiftKey) this.shell.toggle("agent");
-          else this.focusAgent();
+          this.togglePanel("terminal");
+          return;
+        }
+        if (key === "l" && !event.shiftKey) {
+          event.preventDefault();
+          this.focusComposer();
+          return;
+        }
+        if (key === "o" && event.shiftKey) {
+          event.preventDefault();
+          this.newSession();
+          return;
+        }
+        // The physical key first, since Shift+[ is "{" on one layout and
+        // something else on the next; the characters as a fallback, because
+        // not every input path fills in `code` (synthesized and remapped keys
+        // arrive without it, and the shortcut silently did nothing).
+        const next = event.code === "BracketRight" || event.key === "]" || event.key === "}";
+        const previous = event.code === "BracketLeft" || event.key === "[" || event.key === "{";
+        if (event.shiftKey && (next || previous)) {
+          event.preventDefault();
+          this.sessions.cycle(next ? 1 : -1);
           return;
         }
       }
 
       const typing = isTyping();
-      const inControl =
-        typing ||
-        document.activeElement instanceof HTMLButtonElement;
+      const inControl = typing || document.activeElement instanceof HTMLButtonElement;
 
       // Space toggles recording, unless the user is in a control — where space
       // means "activate this button" and stealing it would be hostile.
-      if (event.code === "Space" && !inControl) {
+      if (event.code === "Space" && !inControl && !mod) {
         event.preventDefault();
-        void this.toggle();
+        this.recordFromAnywhere();
         return;
       }
 
@@ -518,10 +522,8 @@ class App {
 
       if (event.key === "/") {
         event.preventDefault();
+        this.openPanel("transcript");
         this.openSearch();
-      } else if (event.key === "k" && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        this.palette.show();
       } else if (event.key === ",") {
         event.preventDefault();
         void this.settings.open();
@@ -586,7 +588,9 @@ class App {
   private applyThemeChoice(theme: Theme): void {
     this.theme = theme;
     applyTheme(theme);
-    this.refs.themeBtn.textContent = theme === "dark" ? "◐" : theme === "light" ? "○" : "◑";
+    // An attribute, not the button's text: the button holds an icon now, and
+    // writing a glyph into it replaced the icon with a character.
+    this.refs.themeBtn.dataset.theme = theme;
     // The canvases paint with resolved theme colours, so they are stale the
     // instant the palette changes and nothing else redraws them.
     this.levelStrip.render();
@@ -610,32 +614,49 @@ class App {
     return s.micDenied;
   }
 
+  /** Show a tab's contents, whether or not the panel is open. */
+  private showTab(tab: PanelTab): void {
+    this.tab = tab;
+    for (const name of PANEL_TABS) el(`doc-${name}`).hidden = name !== tab;
+    this.renderPanelChrome();
+  }
+
   /**
-   * Show one document in the centre.
+   * Open the side panel on a tab.
    *
-   * The code viewer is built the first time it is needed rather than at
-   * startup: its tree costs a request per directory for someone who only came
-   * to record a meeting.
+   * The code viewer and the terminal are built the first time they are opened,
+   * not at startup: a file tree costs a request per directory and a terminal
+   * spawns a shell, and neither is owed to someone who came to record.
    */
-  private openDoc(doc: Doc): void {
-    if (!DOCS.includes(doc)) return;
-    this.doc = doc;
-    for (const name of DOCS) el(`doc-${name}`).hidden = name !== doc;
-    if (doc === "code") this.ensureCode();
-    this.renderTabs();
-    this.renderCrumbs();
+  private openPanel(tab: PanelTab): void {
+    this.showTab(tab);
+    this.shell.show("panel", true);
+    if (tab === "code") this.ensureCode();
+    else if (tab === "terminal") this.openTerminal();
+    else if (tab === "transcript") requestAnimationFrame(() => this.redrawCanvases());
+    this.renderPanelChrome();
+  }
+
+  /** A panel button: open that tab, or close the panel if it is already showing it. */
+  private togglePanel(tab?: PanelTab): void {
+    if (this.shell.visible("panel") && (!tab || tab === this.tab)) {
+      this.shell.show("panel", false);
+      this.renderPanelChrome();
+      return;
+    }
+    this.openPanel(tab ?? this.tab);
   }
 
   private ensureCode(): CodePanel {
     if (!this.code) {
       this.code = new CodePanel(
-        { tree: el("side-explorer"), view: el("doc-code") },
+        { tree: el("code-tree"), view: el("code-view") },
         this.s,
         this.notify,
         {
           onOpen: (label) => {
             this.codeLabel = label;
-            this.openDoc("code");
+            this.renderPanelChrome();
           },
         },
       );
@@ -644,60 +665,30 @@ class App {
     return this.code;
   }
 
-  private showSide(name: string): void {
-    this.shell.show("sidebar", true);
-    this.shell.showSide(name);
+  /** Start or stop recording from outside the panel, and show what it is doing. */
+  private recordFromAnywhere(): void {
+    const status = this.store.get().status;
+    if (status !== "live" && status !== "connecting") this.openPanel("transcript");
+    void this.toggle();
   }
 
-  private onSide(name: string): void {
-    this.renderSidebarTitle();
-    if (name === "explorer") this.ensureCode();
-    // The session pane holds the canvases, which measure zero while hidden
-    // and have to be redrawn once they have a size again.
-    if (name === "session") requestAnimationFrame(() => this.redrawCanvases());
-    this.harnessKey = "";
-    this.renderOutline(true);
-    this.renderHarness();
-  }
-
-  /** ⌘J. The terminal is a panel you toggle, not a place you travel to. */
-  private togglePanel(): void {
-    const open = this.shell.toggle("panel");
-    this.refs.statusPanel.classList.toggle("on", open);
-    if (open) this.openTerminal();
+  private newSession(): void {
+    this.sessions.create();
+    this.sessions.active?.panel.focus();
   }
 
   /**
-   * ⌘L, as in Cursor: go to the agent, and bring any text selected elsewhere
-   * on the page with you as a quote.
+   * ⌘L: go to the composer, bringing any text selected in the side panel with
+   * you as a quote — the transcript line you were just reading, usually.
    */
-  private focusAgent(): void {
-    this.shell.show("agent", true);
+  private focusComposer(): void {
+    const panel = this.sessions.active?.panel;
+    if (!panel) return;
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? "";
     const anchor = selection?.anchorNode ?? null;
-    if (text && anchor && !el("agent").contains(anchor)) this.chat?.quote(text);
-    else this.chat?.focus();
-  }
-
-  /** From the outline to a line, with the landing made visible. */
-  private jumpTo(index: number): void {
-    this.openDoc("transcript");
-    const row = this.refs.transcript.querySelector<HTMLElement>(`[data-index="${index}"]`);
-    if (!row) return;
-    row.scrollIntoView({ block: "center", behavior: "smooth" });
-    row.classList.remove("flash");
-    // Force a reflow, so jumping to the same line twice flashes twice.
-    void row.offsetWidth;
-    row.classList.add("flash");
-  }
-
-  private onContext(gauge: ContextGauge): void {
-    this.store.set({
-      contextTokens: gauge.total,
-      contextWindow: gauge.window,
-      contextPressure: gauge.pressure,
-    });
+    if (text && anchor && el("panel").contains(anchor)) panel.quote(text);
+    else panel.focus();
   }
 
   private redrawCanvases(): void {
@@ -769,6 +760,7 @@ class App {
         this.termMode = "plain";
         el<HTMLButtonElement>("term-mode-pty").disabled = true;
         el("term-mode-pty").title = this.s.terminalNoPty;
+        this.refs.termModeHint.textContent = this.s.terminalNoPty;
       }
     } catch {
       /* the panel falls back to plain, which always works */
@@ -783,28 +775,27 @@ class App {
    * the app is no longer in.
    */
   private buildCommands(): void {
-    const side = (name: string) => () => this.showSide(name);
+    const panel = (tab: PanelTab) => () => this.openPanel(tab);
     const commands: Command[] = [
-      { id: "transcript", ja: "文字起こしを表示", en: "Show the transcript", group: "view", hint: "Ctrl+1", run: () => this.openDoc("transcript") },
-      { id: "analysis", ja: "議事録を表示", en: "Show the minutes", group: "view", hint: "Ctrl+2", run: () => this.openDoc("analysis") },
-      { id: "code", ja: "コードを表示", en: "Show the code", group: "view", hint: "Ctrl+3", run: () => this.openDoc("code") },
+      { id: "new-session", ja: "新しいセッション", en: "New session", group: "session", hint: "Ctrl+Shift+O", run: () => this.newSession() },
+      { id: "composer", ja: "入力欄へ移動", en: "Focus the composer", group: "session", hint: "Ctrl+L", run: () => this.focusComposer() },
+      { id: "next-session", ja: "次のセッション", en: "Next session", group: "session", hint: "Ctrl+Shift+]", run: () => this.sessions.cycle(1) },
+      { id: "previous-session", ja: "前のセッション", en: "Previous session", group: "session", hint: "Ctrl+Shift+[", run: () => this.sessions.cycle(-1) },
+
+      { id: "transcript", ja: "文字起こしを表示", en: "Show the transcript", group: "view", hint: "Ctrl+1", run: panel("transcript") },
+      { id: "analysis", ja: "議事録を表示", en: "Show the minutes", group: "view", hint: "Ctrl+2", run: panel("analysis") },
+      { id: "code", ja: "コードを表示", en: "Show the code", group: "view", hint: "Ctrl+3", run: panel("code") },
+      { id: "terminal", ja: "ターミナルを表示", en: "Show the terminal", group: "view", hint: "Ctrl+4", run: panel("terminal") },
       { id: "sidebar", ja: "サイドバーの表示切替", en: "Toggle the sidebar", group: "view", hint: "Ctrl+B", run: () => void this.shell.toggle("sidebar") },
-      { id: "terminal", ja: "端末パネルの表示切替", en: "Toggle the terminal", group: "view", hint: "Ctrl+J", run: () => this.togglePanel() },
-      { id: "explorer", ja: "エクスプローラー", en: "Explorer", group: "view", run: side("explorer") },
-      { id: "outline", ja: "アウトライン", en: "Outline", group: "view", run: side("outline") },
-      { id: "reset-layout", ja: "レイアウトを初期化", en: "Reset layout", group: "view", run: () => (["sidebar", "agent", "panel"] as const).forEach((region) => this.shell.reset(region)) },
+      { id: "panel", ja: "サイドパネルの表示切替", en: "Toggle the side panel", group: "view", hint: "Ctrl+J", run: () => this.togglePanel() },
+      { id: "reset-layout", ja: "レイアウトを初期化", en: "Reset layout", group: "view", run: () => { this.shell.reset("sidebar"); this.shell.reset("panel"); } },
 
-      { id: "agent", ja: "エージェントに質問", en: "Ask the agent", group: "agent", hint: "Ctrl+L", run: () => this.focusAgent() },
-      { id: "agent-panel", ja: "エージェントパネルの表示切替", en: "Toggle the agent panel", group: "agent", hint: "Ctrl+Shift+L", run: () => void this.shell.toggle("agent") },
-      { id: "agent-new", ja: "新しい会話", en: "New conversation", group: "agent", run: () => this.chat?.clear() },
-      { id: "harness", ja: "ハーネスの状態", en: "Harness status", group: "agent", run: side("harness") },
-
-      { id: "record", ja: "録音の開始・停止", en: "Start or stop recording", group: "meeting", hint: "Space", run: () => void this.toggle() },
-      { id: "demo", ja: "デモを再生", en: "Play the demo meeting", group: "meeting", run: () => void this.startDemo() },
-      { id: "minutes", ja: "議事録を作成", en: "Generate minutes", group: "meeting", run: () => this.requestMinutes() },
+      { id: "record", ja: "録音の開始・停止", en: "Start or stop recording", group: "meeting", hint: "Space", run: () => this.recordFromAnywhere() },
+      { id: "demo", ja: "デモを再生", en: "Play the demo meeting", group: "meeting", run: () => { this.openPanel("transcript"); void this.startDemo(); } },
+      { id: "minutes", ja: "議事録を作成", en: "Generate minutes", group: "meeting", run: () => { this.openPanel("analysis"); this.requestMinutes(); } },
       { id: "copy-transcript", ja: "文字起こしをコピー", en: "Copy the transcript", group: "meeting", run: () => void this.copyTranscript() },
       { id: "copy-minutes", ja: "議事録をコピー", en: "Copy the minutes", group: "meeting", run: () => void this.copyMinutes() },
-      { id: "search", ja: "文字起こしを検索", en: "Search the transcript", group: "meeting", hint: "/", run: () => this.openSearch() },
+      { id: "search", ja: "文字起こしを検索", en: "Search the transcript", group: "meeting", hint: "/", run: () => { this.openPanel("transcript"); this.openSearch(); } },
 
       { id: "settings", ja: "設定を開く", en: "Open settings", group: "app", hint: ",", run: () => void this.settings.open() },
       { id: "plugins", ja: "プラグイン", en: "Plugins", group: "app", run: () => void this.settings.open("plugins") },
@@ -1203,11 +1194,7 @@ class App {
     this.renderTranscript(s);
     this.renderSide(s);
     this.renderStats(s);
-    this.renderStatusBar(s);
-    this.renderCrumbs();
-    this.renderOutline();
-    this.renderHarness();
-    this.refs.agentModel.textContent = state.agent.model || state.activeLlm || "—";
+    this.renderChrome(s);
     this.timeline.render(state.utterances, Math.max(state.durationS, 1));
 
     // One notification per distinct error, not one per render — the store
@@ -1220,46 +1207,49 @@ class App {
     }
   }
 
+  /**
+   * Everything whose words depend on the language.
+   *
+   * Guarded on the language actually changing. This runs from every store
+   * update, and it used to rebuild the palette's whole command list and
+   * re-label every panel several times a second while recording — the most
+   * expensive thing the page did, to change nothing.
+   */
   private renderLabels(s: Strings): void {
-    el("t-transcript").textContent = s.transcript;
+    const lang = this.store.get().uiLang;
+    if (lang === this.labelsLang) return;
+    this.labelsLang = lang;
+
     el("t-level").textContent = s.level;
     el("t-speakers").textContent = s.speakers;
     el("tab-minutes").textContent = s.minutes;
     el("tab-routing").textContent = s.routing;
     el("tab-metrics").textContent = s.metrics;
-    // The language toggle carries its own bilingual aria-label, so it needs
-    // no separate visually-hidden caption the way the old select did.
-    this.refs.uiLang.setAttribute("aria-label", `${s.language} / Language`);
     el("t-asr-lang").textContent = s.asrLanguage;
-    el("t-tagline").textContent = s.tagline;
-    el("t-agent").textContent = s.agentTitle;
-    this.refs.agentClear.title = s.agentNew;
-    this.refs.agentClear.setAttribute("aria-label", s.agentNew);
-    this.refs.agentCollapse.title = s.agentHide;
-    this.refs.agentCollapse.setAttribute("aria-label", s.agentHide);
-    this.refs.statusContext.title = s.statusContext;
-    const activity: Record<string, string> = {
-      "act-session": s.sideSession,
-      "act-explorer": s.sideExplorer,
-      "act-outline": s.sideOutline,
-      "act-harness": s.sideHarness,
-      "act-settings": s.settings,
-    };
-    for (const [id, label] of Object.entries(activity)) {
-      el(id).title = label;
-      el(id).setAttribute("aria-label", label);
+    el("t-new-session").textContent = s.newSession;
+    el("t-sessions").textContent = s.sessionsHeading;
+    // The language toggle carries its own bilingual aria-label.
+    this.refs.uiLang.setAttribute("aria-label", `${s.language} / Language`);
+
+    for (const button of [this.refs.sidebarClose, this.refs.sidebarOpen]) {
+      button.title = `${s.sidebarToggle} (Ctrl+B)`;
+      button.setAttribute("aria-label", s.sidebarToggle);
     }
-    this.renderSidebarTitle();
-    this.renderTabs();
+    this.refs.newSession.title = `${s.newSession} (Ctrl+Shift+O)`;
+    this.refs.navRecord.title = `${s.recordMeeting} (Space)`;
+    this.refs.panelClose.title = `${s.panelClose} (Ctrl+J)`;
+    this.refs.panelClose.setAttribute("aria-label", s.panelClose);
+    this.refs.cmdk.setAttribute("aria-label", s.paletteSearch);
+
     this.palette.setStrings(s);
     this.buildCommands();
-    this.chat?.setStrings(s);
+    this.sessions.setStrings(s);
     this.terminal?.setStrings(s);
     this.pty?.setStrings(s);
     this.code?.setStrings(s);
 
     for (const button of this.refs.uiLang.querySelectorAll<HTMLElement>("[data-lang]")) {
-      const on = button.dataset.lang === this.store.get().uiLang;
+      const on = button.dataset.lang === lang;
       button.classList.toggle("on", on);
       button.setAttribute("aria-checked", String(on));
       // Roving tabindex: one stop for the pair, arrows move within it.
@@ -1267,9 +1257,8 @@ class App {
     }
     el("term-mode-pty").textContent = s.terminalInteractive;
     el("term-mode-plain").textContent = s.terminalPlain;
-    this.refs.termModeHint.textContent = this.ptyAvailable
-      ? s.terminalModeHint
-      : s.terminalNoPty;
+    this.refs.termModeHint.textContent = this.ptyAvailable ? s.terminalModeHint : s.terminalNoPty;
+    this.refs.termModeHint.title = this.refs.termModeHint.textContent;
 
     const auto = this.refs.asrLang.querySelector('option[value="unknown"]');
     if (auto) auto.textContent = s.auto;
@@ -1285,12 +1274,17 @@ class App {
     this.refs.copyTranscript.setAttribute("aria-label", s.copyTranscript);
     this.refs.searchInput.placeholder = s.searchPlaceholder;
     this.refs.searchInput.setAttribute("aria-label", s.searchPlaceholder);
+    this.renderPanelChrome();
   }
 
   private renderTranscript(s: Strings): void {
     const state = this.store.get();
     const { utterances, committed, pending, selectedQuote, query } = state;
     const host = this.refs.transcript;
+    // Rebuilt on every update, so where the reader was has to be carried
+    // across the rebuild: follow the tail only if they were already at it.
+    const followTail = host.scrollHeight - host.scrollTop - host.clientHeight < 80;
+    const previousTop = host.scrollTop;
     host.replaceChildren();
 
     const needle = query.trim();
@@ -1361,12 +1355,18 @@ class App {
         : s.noMatches
       : "";
 
-    // Do not yank the view while someone is reading search results.
-    if (!searching) {
-      const target = host.querySelector("#cited-utterance") ?? host.lastElementChild;
-      target?.scrollIntoView({ block: "nearest" });
+    // Scrolled within the transcript itself. scrollIntoView also scrolls every
+    // scrollable ancestor, which nudges a fixed-height frame out of place, and
+    // following the tail unconditionally yanked a reader who had scrolled up
+    // back to the bottom on every new line.
+    const target = searching
+      ? host.querySelector<HTMLElement>(".utt:not(.dimmed)")
+      : host.querySelector<HTMLElement>("#cited-utterance");
+    if (target) {
+      const offset = target.getBoundingClientRect().top - host.getBoundingClientRect().top;
+      host.scrollTop += offset - host.clientHeight / 2 + target.clientHeight / 2;
     } else {
-      host.querySelector(".utt:not(.dimmed)")?.scrollIntoView({ block: "nearest" });
+      host.scrollTop = followTail ? host.scrollHeight : previousTop;
     }
   }
 
@@ -1522,7 +1522,36 @@ class App {
       this.store.set({ selectedQuote: selected ? null : claim.quote, query: "" });
       if (!selected) this.closeSearch();
     });
-    return node;
+
+    if (!selected || !claim.quote) return node;
+
+    // The source, shown under the claim itself. The transcript is another tab
+    // now, and a highlight in a tab you cannot see is a citation nobody checks.
+    const source = h("div", { class: "claim-source" });
+    const citation = findCitation(state.utterances, claim.quote);
+    if (citation) {
+      const utterance = state.utterances[citation.index];
+      const speaker = utterance.speaker || "—";
+      const who = h("span", { class: "claim-source-who", text: `${speaker} · ${fmtDuration(utterance.start)}` });
+      who.style.setProperty("--spk", `var(--spk-${speakerColorIndex(speaker)})`);
+      const said = h("p", { class: "claim-source-text ja" });
+      if (citation.raw) {
+        const at = utterance.text.indexOf(citation.raw);
+        said.append(
+          utterance.text.slice(0, at),
+          h("mark", { class: "hit", text: citation.raw }),
+          utterance.text.slice(at + citation.raw.length),
+        );
+      } else {
+        said.textContent = utterance.text;
+      }
+      const open = h("button", { class: "btn ghost sm", type: "button", text: s.showInTranscript });
+      open.addEventListener("click", () => this.openPanel("transcript"));
+      source.append(who, said, open);
+    } else {
+      source.append(h("p", { class: "claim-source-text ja", text: `「${claim.quote}」` }));
+    }
+    return h("div", { class: "claim-wrap" }, node, source);
   }
 
   private renderRouting(host: HTMLElement, s: Strings): void {
@@ -1656,214 +1685,49 @@ class App {
     }
   }
 
-  private renderSidebarTitle(): void {
+  /** The frame around the conversation: its title, and whether a meeting is recording. */
+  private renderChrome(s: Strings): void {
+    const state = this.store.get();
+    const recording = state.status === "live" || state.status === "connecting";
+    const title = this.sessions.active?.title ?? "";
+    this.refs.sessionTitle.textContent = title || s.sessionUntitled;
+    const pageTitle = title ? `${title} — koe` : "koe 声 — bilingual voice AI";
+    if (document.title !== pageTitle) document.title = pageTitle;
+
+    const clock = fmtDuration(state.durationS);
+    this.refs.recPill.hidden = !recording;
+    this.refs.recPillText.textContent = `${s.recordingLive} ${clock}`;
+    this.refs.navRecordLabel.textContent = recording ? `${s.stop} · ${clock}` : s.recordMeeting;
+    this.refs.navRecord.classList.toggle("live", recording);
+    this.sessions.setModel(state.activeLlm);
+  }
+
+  /** Which panel button is lit, and what the panel header says. */
+  private renderPanelChrome(): void {
     const s = this.s;
-    const titles: Record<string, string> = {
-      session: s.sideSession,
-      explorer: s.sideExplorer,
-      outline: s.sideOutline,
-      harness: s.sideHarness,
+    const open = this.shell.visible("panel");
+    const labels: Record<PanelTab, string> = {
+      transcript: s.transcript,
+      analysis: s.minutes,
+      code: s.wsCode,
+      terminal: s.wsTerminal,
     };
-    this.refs.sidebarTitle.textContent = titles[this.shell.activeSide] ?? "";
-  }
-
-  /** The centre's tabs. Cheap enough to rebuild whenever what they say changes. */
-  private renderTabs(): void {
-    const s = this.s;
-    const tabs: Array<[Doc, string, string]> = [
-      ["transcript", "声", s.transcript],
-      ["analysis", "議", s.minutes],
-      ["code", "{}", this.codeLabel ? basename(this.codeLabel) : s.wsCode],
-    ];
-    this.refs.tabbar.replaceChildren(
-      ...tabs.map(([doc, icon, label], index) => {
-        const on = doc === this.doc;
-        const tab = h(
-          "button",
-          {
-            class: `tab${on ? " on" : ""}`,
-            type: "button",
-            role: "tab",
-            "data-doc": doc,
-            "aria-selected": String(on),
-            title: `${label} (Ctrl+${index + 1})`,
-          },
-          h("span", { class: "tab-icon", "aria-hidden": "true", text: icon }),
-          h("span", { text: label }),
-        );
-        tab.tabIndex = on ? 0 : -1;
-        return tab;
-      }),
-    );
-  }
-
-  /** Where you are: the session, and what the centre is showing of it. */
-  private renderCrumbs(): void {
-    const state = this.store.get();
-    const s = this.s;
-    const live = state.status === "live";
-    const status = live ? s.listening : state.status === "connecting" ? s.connecting : s.idle;
-    const doc =
-      this.doc === "transcript"
-        ? s.transcript
-        : this.doc === "analysis"
-          ? s.minutes
-          : this.codeLabel || s.wsCode;
-    const parts: Array<Node | string> = [
-      h("span", { text: "koe" }),
-      "›",
-      h("span", { text: status }),
-      "›",
-      h("b", { text: doc }),
-    ];
-    if (live || state.durationS > 0) {
-      parts.push("·", h("span", { class: "mono", text: fmtDuration(state.durationS) }));
-    }
-    this.refs.crumbs.replaceChildren(...parts);
-  }
-
-  /**
-   * The status bar: the session on the left, the harness on the right.
-   *
-   * Context pressure lives here because it is the number that explains both
-   * "why did it forget that" and "why is this costing so much", and until now
-   * it was reachable only by typing /context.
-   */
-  private renderStatusBar(s: Strings): void {
-    const state = this.store.get();
-    const live = state.status === "live";
-    this.refs.statusDot.className = `status-dot${live ? " live" : state.agent.busy ? " ok" : ""}`;
-    this.refs.statusState.textContent = live
-      ? `${s.listening} · ${fmtDuration(state.durationS)}`
-      : this.refs.statusChip.textContent || s.idle;
-    const cost = state.costUsd;
-    this.refs.statusCost.textContent = `$${cost.toFixed(cost > 0 && cost < 0.01 ? 4 : 2)}`;
-    this.refs.statusModel.textContent = state.agent.model || state.activeLlm || "—";
-
-    const pressure = Math.max(0, Math.min(1, state.contextPressure));
-    this.refs.pressureFill.style.width = `${(pressure * 100).toFixed(1)}%`;
-    this.refs.pressureFill.className = pressureTone(pressure);
-    this.refs.statusContextText.textContent = contextLabel(state);
-    this.refs.statusPanel.classList.toggle("on", this.shell.visible("panel"));
-  }
-
-  /** Every line, jumpable. Rebuilt only when the lines themselves change. */
-  private renderOutline(force = false): void {
-    if (this.shell.activeSide !== "outline") return;
-    const state = this.store.get();
-    if (!force && this.outlineFor === state.utterances && this.outlineLang === state.uiLang) return;
-    this.outlineFor = state.utterances;
-    this.outlineLang = state.uiLang;
-
-    const host = this.refs.outline;
-    if (state.utterances.length === 0) {
-      host.replaceChildren(h("p", { class: "note ja", text: this.s.outlineEmpty }));
-      return;
-    }
-    const list = h("div", { class: "outline-list" });
-    state.utterances.forEach((utterance, index) => {
-      const speaker = utterance.speaker || "—";
-      const item = h(
-        "button",
-        { class: "outline-item", type: "button", "data-index": String(index) },
-        h("span", { class: "outline-dot", "aria-hidden": "true" }),
-        h("span", { class: "outline-time", text: fmtDuration(utterance.start) }),
-        h(
-          "span",
-          { class: "outline-text ja" },
-          h("span", { class: "outline-speaker", text: speaker }),
-          utterance.text,
-        ),
-      );
-      item.style.setProperty("--spk", `var(--spk-${speakerColorIndex(speaker)})`);
-      list.append(item);
+    PANEL_TABS.forEach((tab, index) => {
+      const button = document.querySelector<HTMLElement>(`.head-btn[data-panel="${tab}"]`);
+      if (!button) return;
+      const on = open && tab === this.tab;
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-pressed", String(on));
+      button.title = `${labels[tab]} (Ctrl+${index + 1})`;
+      const label = button.querySelector(".label");
+      if (label) label.textContent = labels[tab];
     });
-    host.replaceChildren(list);
-  }
-
-  /** The harness, made visible: what the agent is doing and how full it is. */
-  private renderHarness(): void {
-    if (this.shell.activeSide !== "harness") return;
-    const state = this.store.get();
-    const key = JSON.stringify([
-      state.agent,
-      state.agentCommands.length,
-      state.contextTokens,
-      state.contextWindow,
-      state.uiLang,
-      state.activeLlm,
-    ]);
-    if (key === this.harnessKey) return;
-    this.harnessKey = key;
-
-    const s = this.s;
-    const agent = state.agent;
-    const pressure = Math.max(0, Math.min(1, state.contextPressure));
-    const fill = h("i", { class: pressureTone(pressure) });
-    fill.style.width = `${(pressure * 100).toFixed(1)}%`;
-
-    const facts = h("dl", { class: "kv" });
-    const fact = (label: string, value: string, tone = "") =>
-      facts.append(h("dt", { text: label }), h("dd", { class: tone, text: value }));
-    fact(s.harnessModel, agent.model || state.activeLlm || "—");
-    fact(
-      s.harnessState,
-      agent.busy ? `${s.harnessRunning} · ${s.chatStep} ${agent.step}` : s.harnessIdle,
-      agent.busy ? "busy" : "",
-    );
-    fact(s.harnessTurns, String(agent.turns));
-    fact(s.harnessToolCalls, String(agent.toolCalls));
-    fact(s.harnessCompactions, String(agent.compactions));
-
-    const sections: HTMLElement[] = [
-      h(
-        "div",
-        { class: "side-section" },
-        h("div", { class: "side-section-head", text: s.harnessContext }),
-        h(
-          "div",
-          {
-            class: "gauge",
-            role: "meter",
-            "aria-valuemin": "0",
-            "aria-valuemax": "100",
-            "aria-valuenow": String(Math.round(pressure * 100)),
-          },
-          fill,
-        ),
-        h(
-          "div",
-          { class: "gauge-caption" },
-          h("span", { text: contextLabel(state) }),
-          h("span", { text: "compact @ 80%" }),
-        ),
-      ),
-      h("div", { class: "side-section" }, facts),
-      h("p", { class: "note ja", text: s.harnessHint }),
-    ];
-
-    if (state.agentCommands.length > 0) {
-      const list = h("div", { class: "cmd-list" });
-      for (const command of state.agentCommands) {
-        list.append(
-          h(
-            "button",
-            { class: "cmd-item", type: "button", "data-command": command.name },
-            h("span", { class: "cmd-name", text: `/${command.name}` }),
-            h("span", { class: "cmd-summary", text: command.summary }),
-          ),
-        );
-      }
-      sections.push(
-        h(
-          "div",
-          { class: "side-section" },
-          h("div", { class: "side-section-head", text: s.harnessCommands }),
-          list,
-        ),
-      );
+    this.refs.panelTitle.textContent =
+      this.tab === "code" && this.codeLabel ? basename(this.codeLabel) : labels[this.tab];
+    if (this.refs.panelIcon.dataset.tab !== this.tab) {
+      this.refs.panelIcon.dataset.tab = this.tab;
+      this.refs.panelIcon.replaceChildren(icon(PANEL_ICONS[this.tab], 16));
     }
-    this.refs.harness.replaceChildren(...sections);
   }
 
   private renderStats(s: Strings): void {

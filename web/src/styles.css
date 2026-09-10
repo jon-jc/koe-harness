@@ -20,128 +20,137 @@
 
 /* ---------------------------------------------------------------- tokens */
 
+/*
+ * Warm neutrals and one clay accent, after Claude Code. Cool greys and a blue
+ * accent read as an IDE; warm paper reads as somewhere to think, which is
+ * closer to what a meeting-and-agent tool is for. Every component draws from
+ * these names, so the palette changes here and nowhere else.
+ */
 :root {
   color-scheme: light;
 
-  /* surfaces, from furthest back to nearest front */
-  --bg: #f6f7f9;
+  --bg: #faf9f5;
   --surface: #ffffff;
-  --surface-2: #f0f2f5;
-  --surface-3: #e6e9ee;
-  --border: #dde1e7;
-  --border-strong: #c3c9d2;
+  --surface-2: #f4f2ec;
+  --surface-3: #ebe8df;
+  --sidebar: #f2f0e9;
+  --bubble: #efebe2;
+  --border: #e5e1d6;
+  --border-strong: #d3cdbf;
 
-  /* text */
-  --text: #14171c;
-  --text-2: #4a5260;
-  --text-3: #767f8d;
+  --text: #1f1e1c;
+  --text-2: #56534c;
+  --text-3: #8a867b;
 
-  /* accent + semantics */
-  --accent: #1d6fb8;
-  --accent-hover: #175a96;
-  --accent-soft: #e4eff9;
-  --danger: #c8372a;
-  --danger-soft: #fbeae8;
-  --ok: #2b8a4a;
-  --ok-soft: #e6f4ea;
-  --warn: #a86616;
-  --warn-soft: #fdf1e0;
+  --accent: #c96442;
+  --accent-hover: #b3553a;
+  --accent-soft: #f6e8e0;
+  --danger: #b8412f;
+  --danger-soft: #f8e6e1;
+  --ok: #4f7f45;
+  --ok-soft: #e6efe0;
+  --warn: #a8691a;
+  --warn-soft: #f5ebd9;
 
-  /* speaker palette — hues picked for separation at low saturation, so a
-     transcript with six speakers stays a reading surface and not a rainbow */
-  --spk-0: #1d6fb8;
+  /* speaker palette — separated hues at low saturation, so six speakers stay
+     a reading surface and not a rainbow */
+  --spk-0: #3b6ea8;
   --spk-1: #b5482f;
-  --spk-2: #2f7d55;
-  --spk-3: #7a4bab;
+  --spk-2: #4f7f45;
+  --spk-3: #7a55a8;
   --spk-4: #a8710f;
-  --spk-5: #0f7a86;
+  --spk-5: #2f7f86;
   --spk-6: #a33b73;
-  --spk-7: #556070;
+  --spk-7: #6b6860;
 
-  --radius: 10px;
-  --radius-sm: 6px;
-  --shadow: 0 1px 2px rgb(20 23 28 / 6%), 0 4px 12px rgb(20 23 28 / 5%);
-  --shadow-lg: 0 8px 32px rgb(20 23 28 / 12%);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 20px;
+  --shadow: 0 1px 2px rgb(31 30 28 / 5%), 0 4px 14px rgb(31 30 28 / 5%);
+  --shadow-lg: 0 12px 40px rgb(31 30 28 / 14%);
+  --shadow-composer: 0 1px 2px rgb(31 30 28 / 4%), 0 8px 28px rgb(31 30 28 / 6%);
 
   --font-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic Medium",
     "Yu Gothic", "Noto Sans JP", Meiryo, system-ui, sans-serif;
   --font-ui: system-ui, -apple-system, "Segoe UI", var(--font-ja);
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
+    Georgia, "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono",
     Menlo, Consolas, monospace;
 
   --step: 4px;
-  --header-h: 56px;
-}
-
-:root[data-theme="dark"],
-:root:not([data-theme="light"]) {
-  /* default block below is overridden by the media query when unset */
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #090b0e;
-    --surface: #14191f;
-    --surface-2: #1c222a;
-    --surface-3: #262d37;
-    --border: #2a323d;
-    --border-strong: #3d4754;
-    --text: #e8ebf0;
-    --text-2: #a6aebb;
-    --text-3: #78818f;
-    --accent: #5aa9e6;
-    --accent-hover: #7cc0f2;
-    --accent-soft: #16283a;
-    --danger: #e8695c;
-    --danger-soft: #351a17;
-    --ok: #56c271;
-    --ok-soft: #142b1c;
-    --warn: #d99b3f;
-    --warn-soft: #33260f;
-    --spk-0: #5aa9e6;
+    --bg: #262624;
+    --surface: #30302e;
+    --surface-2: #2b2b29;
+    --surface-3: #3a3936;
+    --sidebar: #1f1e1d;
+    --bubble: #3a3936;
+    --border: #3b3a36;
+    --border-strong: #4f4d48;
+    --text: #f3f1ea;
+    --text-2: #c2bfb4;
+    --text-3: #9a978c;
+    --accent: #d97757;
+    --accent-hover: #e38a6c;
+    --accent-soft: #3d2b24;
+    --danger: #e0705e;
+    --danger-soft: #3b211d;
+    --ok: #86b573;
+    --ok-soft: #22301d;
+    --warn: #d9a04f;
+    --warn-soft: #362914;
+    --spk-0: #7aa7dc;
     --spk-1: #e8836d;
-    --spk-2: #62c98c;
+    --spk-2: #86b573;
     --spk-3: #b18ce0;
     --spk-4: #dcae54;
-    --spk-5: #4fc2cd;
+    --spk-5: #5fc0c8;
     --spk-6: #e07fb5;
-    --spk-7: #98a3b3;
-    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 12px rgb(0 0 0 / 30%);
-    --shadow-lg: 0 8px 32px rgb(0 0 0 / 50%);
+    --spk-7: #a8a59b;
+    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 14px rgb(0 0 0 / 25%);
+    --shadow-lg: 0 12px 40px rgb(0 0 0 / 45%);
+    --shadow-composer: 0 1px 2px rgb(0 0 0 / 25%), 0 8px 28px rgb(0 0 0 / 22%);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #090b0e;
-  --surface: #14191f;
-  --surface-2: #1c222a;
-  --surface-3: #262d37;
-  --border: #2a323d;
-  --border-strong: #3d4754;
-  --text: #e8ebf0;
-  --text-2: #a6aebb;
-  --text-3: #78818f;
-  --accent: #5aa9e6;
-  --accent-hover: #7cc0f2;
-  --accent-soft: #16283a;
-  --danger: #e8695c;
-  --danger-soft: #351a17;
-  --ok: #56c271;
-  --ok-soft: #142b1c;
-  --warn: #d99b3f;
-  --warn-soft: #33260f;
-  --spk-0: #5aa9e6;
+  --bg: #262624;
+  --surface: #30302e;
+  --surface-2: #2b2b29;
+  --surface-3: #3a3936;
+  --sidebar: #1f1e1d;
+  --bubble: #3a3936;
+  --border: #3b3a36;
+  --border-strong: #4f4d48;
+  --text: #f3f1ea;
+  --text-2: #c2bfb4;
+  --text-3: #9a978c;
+  --accent: #d97757;
+  --accent-hover: #e38a6c;
+  --accent-soft: #3d2b24;
+  --danger: #e0705e;
+  --danger-soft: #3b211d;
+  --ok: #86b573;
+  --ok-soft: #22301d;
+  --warn: #d9a04f;
+  --warn-soft: #362914;
+  --spk-0: #7aa7dc;
   --spk-1: #e8836d;
-  --spk-2: #62c98c;
+  --spk-2: #86b573;
   --spk-3: #b18ce0;
   --spk-4: #dcae54;
-  --spk-5: #4fc2cd;
+  --spk-5: #5fc0c8;
   --spk-6: #e07fb5;
-  --spk-7: #98a3b3;
-  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 12px rgb(0 0 0 / 30%);
-  --shadow-lg: 0 8px 32px rgb(0 0 0 / 50%);
+  --spk-7: #a8a59b;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 14px rgb(0 0 0 / 25%);
+  --shadow-lg: 0 12px 40px rgb(0 0 0 / 45%);
+  --shadow-composer: 0 1px 2px rgb(0 0 0 / 25%), 0 8px 28px rgb(0 0 0 / 22%);
 }
 
 /* ---------------------------------------------------------------- reset */
@@ -223,379 +232,309 @@ input {
 /* ---------------------------------------------------------------- layout */
 
 /*
- * A workbench, not a page.
- *
- * Three rows: a thin titlebar, the body, a status bar. The body is a row of
- * regions whose widths are CSS variables the shell writes, so a drag is one
- * custom-property write rather than a relayout of a flex tree — and the
- * regions can be collapsed by a class without any of them learning about the
- * others.
- *
- * The centre is the only region with `1fr`. Everything else is sized, which is
- * what makes "the editor gets the leftover space" true rather than a
- * coincidence of flex-grow values.
+ * Three columns: sessions, the conversation, a side panel. The side widths
+ * are CSS variables the shell writes, so a drag is one custom-property write
+ * rather than a relayout, and the conversation takes whatever is left.
  */
-.workbench {
-  --sidebar-w: 264px;
-  --agent-w: 400px;
-  --panel-h: 260px;
-  --titlebar-h: 40px;
-  --status-h: 24px;
-  --activity-w: 48px;
-
+.app {
+  --sidebar-w: 268px;
+  --panel-w: 520px;
   display: grid;
-  grid-template-rows: var(--titlebar-h) 1fr var(--status-h);
+  grid-template-columns: var(--sidebar-w) auto minmax(0, 1fr) auto var(--panel-w);
   height: 100dvh;
   overflow: hidden;
   background: var(--bg);
 }
 
-.workbench-body {
-  display: grid;
-  grid-template-columns:
-    var(--activity-w)
-    var(--sidebar-w)
-    auto
-    minmax(0, 1fr)
-    auto
-    var(--agent-w);
-  min-height: 0;
+
+/* Every region names its cell, so hiding one never slides another into it. */
+.app > .sidebar { grid-area: 1 / 1; }
+.app > #split-sidebar { grid-area: 1 / 2; }
+.app > .main { grid-area: 1 / 3; }
+.app > #split-panel { grid-area: 1 / 4; }
+.app > .side-panel { grid-area: 1 / 5; }
+
+.grow {
+  flex: 1;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.75px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner.sm {
+  width: 10px;
+  height: 10px;
+}
+
+/* ------------------------------------------------------------ sidebar */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 8px;
   overflow: hidden;
+  background: var(--sidebar);
 }
 
-/* Every region names its cell. With auto-placement, hiding the sidebar would
-   slide the centre into the sidebar's zero-width column. */
-.workbench-body > .activity { grid-area: 1 / 1; }
-.workbench-body > .sidebar { grid-area: 1 / 2; }
-.workbench-body > #split-sidebar { grid-area: 1 / 3; }
-.workbench-body > .center { grid-area: 1 / 4; }
-.workbench-body > #split-agent { grid-area: 1 / 5; }
-.workbench-body > .agent { grid-area: 1 / 6; }
-.center > .tabbar { grid-row: 1; }
-.center > .surface { grid-row: 2; }
-.center > #split-panel { grid-row: 3; }
-.center > .panel { grid-row: 4; }
-
-/* Collapsing a region takes its column to zero and its splitter with it,
-   rather than hiding it on top of space it still occupies. */
-.workbench.no-sidebar {
-  --sidebar-w: 0px;
-}
-
-.workbench.no-agent {
-  --agent-w: 0px;
-}
-
-.workbench.no-panel {
-  --panel-h: 0px;
-}
-
-/* ------------------------------------------------------------- titlebar */
-
-.titlebar {
+.sb-head {
   display: flex;
   align-items: center;
-  gap: calc(var(--step) * 3);
-  padding: 0 calc(var(--step) * 2) 0 calc(var(--step) * 3);
-  background: var(--surface-2);
-  border-block-end: 1px solid var(--border);
-  -webkit-app-region: drag;
-  user-select: none;
-}
-
-.titlebar button,
-.titlebar .lang {
-  -webkit-app-region: no-drag;
+  gap: 8px;
+  height: 36px;
+  padding: 0 2px 0 10px;
+  margin-block-end: 8px;
 }
 
 .brand {
   display: flex;
   align-items: baseline;
-  gap: calc(var(--step) * 1.5);
-  font-weight: 650;
-  font-size: 13px;
-  letter-spacing: -0.01em;
+  gap: 7px;
+  white-space: nowrap;
 }
 
 .brand-mark {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  line-height: 1;
   color: var(--accent);
-  font-family: var(--font-ja);
-  font-size: 15px;
 }
 
-.brand-kind {
-  font-weight: 400;
-  font-size: 11px;
-  color: var(--text-3);
-}
-
-/* The session, centred — the titlebar's equivalent of a file path. Absolutely
-   positioned so it stays centred on the window rather than on whatever space
-   the two action groups happen to leave. */
-.crumbs {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 1.5);
-  font-size: 11px;
-  color: var(--text-3);
-  pointer-events: none;
-  max-width: 40vw;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.crumbs b {
-  color: var(--text-2);
+.brand-name {
+  font-family: var(--font-serif);
+  font-size: 19px;
   font-weight: 500;
-}
-
-.titlebar-actions {
-  margin-inline-start: auto;
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step));
-}
-
-.kbd-hint {
-  font-size: 9px;
-  opacity: 0.7;
-  margin-inline-start: 1px;
-}
-
-/* ------------------------------------------------------------- activity */
-
-/*
- * Icons only. A rail with labels is a navigation menu; a rail without them is
- * a set of tools you learn once and then recognise by shape, which is the
- * trade every editor makes and the reason 48px is enough.
- */
-.activity {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: calc(var(--step)) 0;
-  background: var(--surface-2);
-  border-inline-end: 1px solid var(--border);
-}
-
-.activity-item {
-  appearance: none;
-  border: 0;
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  cursor: pointer;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  position: relative;
-  transition: color 120ms ease, background 120ms ease;
-}
-
-.activity-item:hover {
+  letter-spacing: -0.01em;
   color: var(--text);
+}
+
+.new-session,
+.sb-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.new-session:hover,
+.sb-item:hover {
   background: var(--surface-3);
 }
 
-.activity-item.on {
-  color: var(--accent);
+.new-session {
+  font-weight: 500;
 }
 
-/* The marker is on the rail edge rather than a filled background: it reads at
-   a glance without turning the rail into a column of coloured tiles. */
-.activity-item.on::before {
-  content: "";
-  position: absolute;
-  inset-inline-start: -6px;
-  inset-block: 6px;
-  width: 2px;
-  border-radius: 1px;
+.new-session-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
   background: var(--accent);
+  color: #fff;
 }
 
-.activity-icon {
-  font-size: 15px;
-  line-height: 1;
-  font-family: var(--font-ja);
+.new-session-icon .icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.4;
 }
 
-.activity-spacer {
-  flex: 1;
+.sb-item-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
 }
 
-/* -------------------------------------------------------------- sidebar */
+.rec-dot {
+  display: inline-block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+}
 
-.sidebar {
+.rec-dot.live,
+.sb-item.live .rec-dot {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.sb-item.live {
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-heading {
+  margin: 20px 10px 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.session-list {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  background: var(--surface-2);
-  overflow: hidden;
-}
-
-.sidebar-head {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step));
-  height: 32px;
-  padding: 0 calc(var(--step) * 2) 0 calc(var(--step) * 3);
-  flex: none;
-}
-
-.sidebar-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.sidebar-body {
+  gap: 1px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
-.side-pane {
+.session-item {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: calc(var(--step) * 3);
-  padding: calc(var(--step) * 2) calc(var(--step) * 3) calc(var(--step) * 4);
-}
-
-.side-pane[hidden] {
-  display: none;
-}
-
-.side-section {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--step) * 1.5);
-}
-
-.side-section-head {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-
-.record {
-  display: flex;
-  gap: calc(var(--step));
-}
-
-/* The one control the meeting workspace exists for, sized like it. */
-.record-btn {
-  flex: 1;
-  appearance: none;
-  border: 1px solid transparent;
+  align-items: center;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: #fff;
+}
+
+.session-item:hover,
+.session-item.on {
+  background: var(--surface-3);
+}
+
+.session-main {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 4px 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  padding: calc(var(--step) * 2);
+  text-align: start;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: calc(var(--step) * 1.5);
-  transition: background 120ms ease, border-color 120ms ease;
 }
 
-.record-btn:hover {
-  background: var(--accent-hover);
+.session-status {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 12px;
 }
 
-.record-btn[aria-pressed="true"] {
-  background: var(--danger-soft);
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-.field {
+.session-text {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--step));
+  min-width: 0;
 }
 
-.field-label {
-  font-size: 11px;
-  color: var(--text-3);
-}
-
-.meters {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--step) * 1.5);
-}
-
-.meter-row {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 1.5);
-}
-
-.meter-label {
-  font-size: 11px;
-  color: var(--text-3);
+.session-name,
+.session-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.chips {
+.session-name {
+  font-size: 13.5px;
+}
+
+.session-meta {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.session-item.busy .session-meta {
+  color: var(--accent);
+}
+
+.session-close {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-inline-end: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.session-item:hover .session-close,
+.session-close:focus-visible {
+  opacity: 1;
+}
+
+.session-close:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.sb-foot {
   display: flex;
-  flex-wrap: wrap;
-  gap: calc(var(--step));
+  align-items: center;
+  gap: 2px;
+  margin-block-start: 6px;
+  padding: 8px 2px 0;
+  border-block-start: 1px solid var(--border);
 }
 
 /* ------------------------------------------------------------ splitters */
 
-/*
- * Four pixels wide with a wider invisible hit area. A splitter you can see is
- * a line in the design; a splitter you can grab is one you can actually use,
- * and those are different sizes.
- */
+/* A 1px line with a wider invisible grab area: a splitter you can see is a
+   line in the design, a splitter you can grab is one you can use. */
 .splitter {
   position: relative;
-  flex: none;
-  background: var(--border);
-  z-index: 2;
-}
-
-.splitter.vertical {
+  z-index: 3;
   width: 1px;
+  background: var(--border);
   cursor: col-resize;
-}
-
-.splitter.horizontal {
-  height: 1px;
-  cursor: row-resize;
 }
 
 .splitter::after {
   content: "";
   position: absolute;
-  inset: 0;
-  /* The grab area, extended past the visible line in both directions. */
-}
-
-.splitter.vertical::after {
-  inset-inline: -3px;
-}
-
-.splitter.horizontal::after {
-  inset-block: -3px;
+  inset-block: 0;
+  inset-inline: -4px;
 }
 
 .splitter:hover,
@@ -605,390 +544,386 @@ input {
   outline: none;
 }
 
-.splitter[hidden] {
-  display: none;
-}
-
-/* While dragging, nothing else should be selecting text or showing a caret. */
 body.resizing {
   cursor: col-resize;
   user-select: none;
 }
 
-body.resizing.rows {
-  cursor: row-resize;
-}
+/* ---------------------------------------------------------------- main */
 
-/* --------------------------------------------------------------- centre */
-
-.center {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto var(--panel-h);
-  min-width: 0;
-  min-height: 0;
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.tabbar {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  height: 34px;
-  background: var(--surface-2);
-  border-block-end: 1px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.tabbar::-webkit-scrollbar {
-  display: none;
-}
-
-.tab {
-  appearance: none;
-  border: 0;
-  border-inline-end: 1px solid var(--border);
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  font-size: 12px;
-  padding: 0 calc(var(--step) * 3);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 1.5);
-  white-space: nowrap;
-  position: relative;
-}
-
-.tab:hover {
-  color: var(--text);
-  background: var(--surface-3);
-}
-
-.tab.on {
-  color: var(--text);
-  background: var(--surface);
-}
-
-/* The active tab is joined to the surface below it by a light top edge and a
-   missing bottom border — the standard cue that a tab and its content are one
-   object rather than two stacked ones. */
-.tab.on::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  inset-block-start: 0;
-  height: 2px;
-  background: var(--accent);
-}
-
-.tab-icon {
-  font-family: var(--font-ja);
-  font-size: 12px;
-  opacity: 0.8;
-}
-
-.surface {
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-}
-
-.doc {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
+.main {
+  /* The header sizes itself to the conversation, not the window. */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
 }
 
-.doc[hidden] {
-  display: none;
-}
-
-.doc-head {
+.main-head {
   display: flex;
   align-items: center;
-  gap: calc(var(--step) * 2);
-  padding: calc(var(--step) * 1.5) calc(var(--step) * 3);
-  border-block-end: 1px solid var(--border);
+  gap: 6px;
   flex: none;
-  min-height: 34px;
+  height: 52px;
+  padding: 0 12px 0 18px;
 }
 
-.doc-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.session-title {
+  min-width: 0;
+  max-width: 48%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.head-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.head-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.head-btn:hover,
+.head-btn.on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   color: var(--text-3);
 }
 
-.doc-body {
+.rec-pill {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin-inline-end: 6px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: none;
+  cursor: pointer;
+}
+
+.rec-pill .rec-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.sessions-host {
+  display: flex;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: calc(var(--step) * 4);
-  scroll-behavior: smooth;
 }
 
-/* ---------------------------------------------------------------- panel */
+.session-view {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 
-.panel {
+/* ---------------------------------------------------------- side panel */
+
+.side-panel {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
-  background: var(--surface);
   overflow: hidden;
-}
-
-.panel[hidden] {
-  display: none;
+  background: var(--surface);
 }
 
 .panel-head {
   display: flex;
   align-items: center;
-  gap: calc(var(--step) * 2);
-  padding: calc(var(--step)) calc(var(--step) * 2);
-  border-block-end: 1px solid var(--border);
-  background: var(--surface-2);
+  gap: 8px;
   flex: none;
+  height: 52px;
+  padding: 0 10px 0 18px;
+  border-block-end: 1px solid var(--border);
+}
+
+.panel-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.panel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pane-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 10px 14px;
+  border-block-end: 1px solid var(--border);
 }
 
 /* The mode switch keeps its size and the hint gives way: a clipped control
-   is broken, a truncated sentence is merely shorter. The full hint is on
-   hover. */
-.panel-head .segmented {
+   is broken, a truncated sentence is merely shorter. */
+.pane-toolbar .segmented {
   flex: none;
 }
 
-.panel-head .note {
+.pane-toolbar .note {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 11.5px;
+}
+
+.pane-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  padding: 10px 14px 12px;
+  border-block-end: 1px solid var(--border);
+}
+
+.meter-row,
+.speaker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meter-row .level,
+.speaker-row .strip {
+  flex: 1;
+}
+
+.meter-label {
+  min-width: 64px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip.mono {
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.panel-body {
+.pane-body {
   flex: 1;
   min-height: 0;
-  display: flex;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px 24px;
 }
 
-.panel-body > * {
+.pane-fill {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.pane-fill > * {
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
 
-/* ---------------------------------------------------------------- agent */
+.code-pane {
+  display: grid;
+  grid-template-rows: minmax(140px, 36%) minmax(0, 1fr);
+}
 
-.agent {
+.code-tree-host {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  background: var(--surface);
-  border-inline-start: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.agent[hidden] {
-  display: none;
-}
-
-.agent-head {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 1.5);
-  height: 34px;
-  padding: 0 calc(var(--step) * 2);
+  min-height: 0;
   border-block-end: 1px solid var(--border);
   background: var(--surface-2);
-  flex: none;
 }
 
-.agent-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-3);
+.code-tree-host .code-side-head {
+  padding: 10px 14px;
 }
 
-.agent-body {
+.code-tree-host .tree {
   flex: 1;
   min-height: 0;
+  overflow: auto;
+  padding: 0 10px 10px;
+}
+
+.code-view-host {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
 }
 
-.badge {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  color: var(--text-3);
-  background: var(--surface-3);
-  border-radius: 3px;
-  padding: 1px 5px;
-  white-space: nowrap;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.code-view-host .code-view {
+  flex: 1;
 }
 
-/* ------------------------------------------------------------ statusbar */
-
-/*
- * The harness made visible. Context pressure is the number that answers both
- * "why did it forget that" and "why is this costing so much", and before this
- * it was reachable only by typing /context.
- */
-.statusbar {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--step) * 2);
-  padding: 0 calc(var(--step) * 2);
-  background: var(--surface-2);
-  border-block-start: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-3);
-  user-select: none;
-}
-
-.status-item {
+/* The record control in the transcript panel. Clay at rest, because starting
+   is the thing the panel is for; red while live, because stopping is. */
+.rec-btn {
   appearance: none;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: calc(var(--step));
-  padding: 0 calc(var(--step));
-  height: 100%;
-  border-radius: 3px;
-}
-
-button.status-item {
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
 
-button.status-item:hover {
-  background: var(--surface-3);
-  color: var(--text);
+.rec-btn:hover {
+  background: var(--accent-hover);
 }
 
-.status-item.mono {
-  font-family: var(--font-mono);
-  font-size: 10px;
+.rec-btn .rec-dot {
+  width: 8px;
+  height: 8px;
+  background: #fff;
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-3);
+.rec-btn.recording {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
-.status-dot.live {
+.rec-btn.recording .rec-dot {
   background: var(--danger);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-.status-dot.ok {
-  background: var(--ok);
-}
-
-/* A bar rather than a percentage alone: the shape of "nearly full" is read
-   before the number is, and the number is there for when it matters. */
-.pressure {
-  display: inline-block;
-  width: 44px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface-3);
-  overflow: hidden;
-}
-
-.pressure i {
-  display: block;
-  height: 100%;
-  width: 0;
-  background: var(--accent);
-  transition: width 200ms ease, background 200ms ease;
-}
-
-.pressure i.warn {
-  background: var(--warn);
-}
-
-.pressure i.bad {
-  background: var(--danger);
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-.grow {
-  flex: 1;
+  animation: pulse 1.4s ease-in-out infinite;
 }
 
 /* --------------------------------------------------------- narrow windows */
 
-/*
- * Below 1100px the agent panel stops being a column and becomes an overlay,
- * because three columns plus a rail in 900px leaves an editor too narrow to
- * read a transcript in. It is the same panel with the same contents; only
- * where it sits changes.
- */
-@media (width < 1100px) {
-  .workbench-body {
-    grid-template-columns: var(--activity-w) var(--sidebar-w) auto minmax(0, 1fr);
+/* The header follows the conversation's width, not the window's: with the
+   panel open, a wide window can still leave a narrow conversation, and the
+   labels have to give way before the controls get clipped. */
+@container (width < 760px) {
+  .head-btn .label {
+    display: none;
   }
 
-  .agent {
-    position: fixed;
-    inset-block: var(--titlebar-h) var(--status-h);
-    inset-inline-end: 0;
-    width: min(var(--agent-w), 92vw);
-    box-shadow: var(--shadow-lg);
-    z-index: 30;
+  .head-btn {
+    padding: 0 9px;
   }
+}
 
-  #split-agent {
+@container (width < 520px) {
+  .head-btn .kbd,
+  #rec-pill-text {
     display: none;
   }
 }
 
-@media (width < 720px) {
-  .sidebar {
+/* Below 1000px the panel overlays the conversation rather than squeezing it
+   into a column too narrow to read. Same panel, same contents. */
+@media (width < 1000px) {
+  .app {
+    grid-template-columns: var(--sidebar-w) auto minmax(0, 1fr) 0 0;
+  }
+
+  .side-panel {
     position: fixed;
-    inset-block: var(--titlebar-h) var(--status-h);
-    inset-inline-start: var(--activity-w);
-    width: min(var(--sidebar-w), 80vw);
+    inset-block: 0;
+    inset-inline-end: 0;
+    z-index: 40;
+    width: min(var(--panel-w), 94vw);
+    border-inline-start: 1px solid var(--border);
     box-shadow: var(--shadow-lg);
-    z-index: 25;
   }
 
-  .workbench-body {
-    grid-template-columns: var(--activity-w) 0 auto minmax(0, 1fr);
-  }
-
-  #split-sidebar {
+  #split-panel {
     display: none;
   }
+}
 
-  .crumbs {
+@media (width < 760px) {
+  .app {
+    grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 45;
+    width: min(var(--sidebar-w), 86vw);
+    box-shadow: var(--shadow-lg);
+  }
+
+  #split-sidebar,
+  .head-btn .kbd {
     display: none;
   }
 }
@@ -1103,28 +1038,25 @@ button.status-item:hover {
   border-color: var(--border);
 }
 
-/* In the titlebar these are chrome, not controls: borderless until hovered,
-   so the bar reads as one quiet strip. */
-.titlebar .icon-btn {
-  width: 28px;
-  height: 28px;
+/* Chrome rather than controls: borderless until hovered, so a toolbar reads
+   as one quiet strip instead of a row of boxes. */
+.icon-btn.ghost {
   border-color: transparent;
-  font-size: 13px;
 }
 
-.titlebar #cmdk {
-  display: inline-flex;
-  gap: 1px;
-  width: auto;
-  padding: 0 8px;
-  border-color: var(--border);
-  font-family: var(--font-mono);
+.icon-btn.ghost:hover {
+  background: var(--surface-3);
+}
+
+.select.sm {
+  height: 32px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+
+.sb-foot .lang-opt {
+  padding: 4px 9px;
   font-size: 11px;
-}
-
-.titlebar .lang-opt {
-  padding: 3px 8px;
-  font-size: 10.5px;
 }
 
 /* ---------------------------------------------------------------- meta */
@@ -1553,18 +1485,44 @@ kbd {
 }
 
 /* Scrollbars: present but quiet. */
-:is(.doc-body, .cc-log, .sidebar-body, .tree)::-webkit-scrollbar {
+:is(.pane-body, .chat-scroll, .session-list, .tree, .tool-output)::-webkit-scrollbar {
   width: 10px;
 }
 
-:is(.doc-body, .cc-log, .sidebar-body, .tree)::-webkit-scrollbar-thumb {
+:is(.pane-body, .chat-scroll, .session-list, .tree, .tool-output)::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 5px;
   border: 3px solid var(--surface);
 }
 
-:is(.doc-body, .cc-log, .sidebar-body, .tree)::-webkit-scrollbar-track {
+:is(.pane-body, .chat-scroll, .session-list, .tree, .tool-output)::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* A claim's source, opened under the claim. */
+.claim-source {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 14px 12px;
+  border-inline-start: 2px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--surface-2);
+}
+
+.claim-source-who {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--spk, var(--text-2));
+}
+
+.claim-source-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text);
 }
 
 /* A section heading inside a document or dialog. */
@@ -2114,643 +2072,727 @@ mark.find {
 
 /* ---------------------------------------------------------------- chat */
 
-/*
- * The agent transcript, after Claude Code.
- *
- * One column with a glyph gutter instead of bubbles, because an agent turn is
- * mostly actions rather than speech, and bubbles answer "who spoke" when the
- * reader is asking "what did it do". The gutter glyph carries state: a tool
- * call's dot is amber while it runs, then green or red, so a failure is found
- * by colour before it is found by reading.
- */
-.cc-log {
+.chat {
+  /* The greeting scales to the conversation, not the window. */
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: calc(var(--step) * 3) calc(var(--step) * 3) calc(var(--step) * 2);
+  scrollbar-gutter: stable both-edges;
+}
+
+/* A reading column: wider than a messaging app, narrower than the window.
+   Prose past ~75 characters a line is harder to read whatever the screen. */
+.chat-column,
+.dock-column {
+  width: 100%;
+  max-width: 768px;
+  margin: 0 auto;
+  padding-inline: 24px;
+}
+
+.chat-column {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--step) * 2.5);
-  font-size: 13px;
-  line-height: 1.65;
+  gap: 20px;
+  padding-block: 12px 28px;
 }
 
-.cc-entry {
-  position: relative;
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  column-gap: calc(var(--step) * 2);
-  align-items: start;
-  animation: cc-in 160ms ease-out;
+.chat.is-empty .chat-scroll {
+  display: none;
 }
 
-@keyframes cc-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: none; }
+.chat-dock {
+  flex: none;
+  padding-block-end: 12px;
 }
 
-/* 13px at 1.65 is a 21px line: the glyph sits on the first line of text
-   rather than floating at the top of a tall entry. */
-.cc-marker {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 21px;
+/* Before the first message the composer sits in the middle under a greeting,
+   and moves to the bottom once there is a conversation to sit under. */
+.chat.is-empty .chat-dock {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  padding-block-end: 12vh;
+}
+
+.greeting,
+.suggestions {
+  display: none;
+}
+
+.chat.is-empty .greeting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-block-end: 30px;
   text-align: center;
-  color: var(--text-3);
-  user-select: none;
 }
 
-.cc-body {
-  min-width: 0;
+.chat.is-empty .suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-block-start: 18px;
+}
+
+.greeting-mark {
+  margin-block-end: 14px;
+  font-family: var(--font-serif);
+  font-size: 42px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.greeting-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  /* Scaled rather than wrapped: Japanese has no spaces to break at, so a
+     narrow column split おはようございます one character from the end. */
+  font-size: clamp(22px, 7cqi, 36px);
+  white-space: nowrap;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.greeting-sub {
+  max-width: 520px;
+  margin: 12px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.suggestion {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.suggestion:hover {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.suggestion .icon {
+  color: var(--text-3);
+}
+
+/* ---- messages */
+
+.m-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 10px 16px;
+  border-radius: 18px;
+  background: var(--bubble);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* you */
-.cc-user,
-.cc-steer {
-  background: var(--surface-2);
-  border-radius: var(--radius-sm);
-  padding: calc(var(--step) * 1.5) calc(var(--step) * 2) calc(var(--step) * 1.5)
-    calc(var(--step) * 1.5);
-  margin-inline: calc(var(--step) * -1.5);
+.m-user.steer .bubble {
+  background: var(--accent-soft);
 }
 
-.cc-user .cc-marker {
-  font-weight: 700;
+.steer-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent);
 }
 
-.cc-user-text {
-  white-space: pre-wrap;
+.m-user.steer.landed .steer-label::after {
+  content: " ✓";
+}
+
+.m-assistant {
+  position: relative;
+}
+
+.prose {
+  font-size: 15px;
+  line-height: 1.72;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
-.cc-steer {
-  background: var(--warn-soft);
-}
-
-.cc-steer .cc-marker {
-  color: var(--warn);
-}
-
-.cc-tag {
-  display: inline-block;
-  margin-inline-end: 6px;
-  padding: 0 5px;
-  border-radius: 3px;
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 16px;
-  text-transform: uppercase;
-  vertical-align: 1px;
-  color: var(--warn);
-}
-
-.cc-steer.landed .cc-tag {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
-}
-
-/* the agent */
-.cc-assistant .cc-marker {
-  color: var(--text);
-}
-
-.cc-copy {
-  position: absolute;
-  inset-block-start: -2px;
-  inset-inline-end: -4px;
+.m-actions {
+  display: flex;
+  gap: 2px;
+  margin-block-start: 4px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.cc-assistant:hover .cc-copy,
-.cc-copy:focus-visible {
+.m-assistant:hover .m-actions,
+.m-actions:focus-within {
   opacity: 1;
 }
 
-/* tools */
-.cc-tool.running .cc-marker {
-  color: var(--warn);
-  animation: pulse 1.2s ease-in-out infinite;
-}
+/* ---- markdown */
 
-.cc-tool.ok .cc-marker {
-  color: var(--ok);
-}
-
-.cc-tool.failed .cc-marker {
-  color: var(--danger);
-}
-
-.cc-tool-head {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 21px;
-}
-
-.cc-tool-name {
-  font-weight: 700;
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.cc-tool-args {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-}
-
-.cc-tool-meta {
-  margin-inline-start: auto;
-  padding-inline-start: calc(var(--step) * 2);
-  font-size: 10.5px;
-  white-space: nowrap;
-  color: var(--text-3);
-}
-
-.cc-tool.failed .cc-tool-meta {
-  color: var(--danger);
-}
-
-/* the ⎿ line hung under an entry */
-.cc-result {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  margin-block-start: 1px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--text-2);
-}
-
-.cc-elbow {
-  color: var(--text-3);
-  user-select: none;
-}
-
-.cc-result-text {
-  max-height: 360px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.cc-result.dim {
-  color: var(--text-3);
-}
-
-.cc-result.bad {
-  color: var(--danger);
-}
-
-.cc-more {
-  grid-column: 2;
-  justify-self: start;
-  appearance: none;
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  color: var(--text-3);
-  cursor: pointer;
-}
-
-.cc-more:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.cc-notice .cc-marker {
-  color: var(--accent);
-}
-
-.cc-notice-text {
-  font-size: 12px;
-  color: var(--text-2);
-}
-
-.cc-error .cc-marker,
-.cc-error .cc-body {
-  color: var(--danger);
-}
-
-.cc-summary {
-  display: flex;
-  gap: 6px;
-  padding-inline-start: 22px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-3);
-}
-
-.cc-summary span {
-  color: var(--accent);
-}
-
-/* markdown inside an answer */
 .md-p {
-  margin: 0 0 6px;
-}
-
-.md-p:last-child {
-  margin-block-end: 0;
+  margin: 0 0 12px;
 }
 
 .md-h {
-  margin: 10px 0 4px;
-  font-weight: 700;
+  margin: 18px 0 8px;
+  font-weight: 600;
 }
 
-.md-h1 { font-size: 15px; }
-.md-h2 { font-size: 14px; }
+.md-h1 { font-size: 19px; }
+.md-h2 { font-size: 17px; }
+.md-h3,
+.md-h4 { font-size: 15px; }
 
 .md-list {
-  margin: 2px 0 6px;
-  padding-inline-start: 18px;
+  margin: 4px 0 12px;
+  padding-inline-start: 22px;
 }
 
 .md-list li + li {
-  margin-block-start: 2px;
+  margin-block-start: 4px;
+}
+
+.prose > :last-child {
+  margin-block-end: 0;
 }
 
 .md-inline {
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 2px 6px;
+  border-radius: 5px;
   background: var(--surface-3);
+  color: var(--text);
   font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-size: 0.86em;
 }
 
 .md-code {
-  position: relative;
-  margin: 6px 0;
+  margin: 10px 0 14px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  border-radius: var(--radius);
+  background: var(--surface-2);
 }
 
 .md-code pre {
   margin: 0;
-  padding: 10px 12px;
+  padding: 14px 16px;
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 
 .md-lang {
-  position: absolute;
-  inset-block-start: 4px;
-  inset-inline-end: 8px;
+  display: block;
+  padding: 6px 14px;
+  border-block-end: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
 }
 
-/* the working line */
-.cc-working {
+/* ---- tool calls: one card per step, one row per call */
+
+.tools {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tool + .tool {
+  border-block-start: 1px solid var(--border);
+}
+
+.tool-head {
+  appearance: none;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  padding: 6px calc(var(--step) * 3) 4px;
-  font-size: 12px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
 }
 
-.cc-glyph {
+.tool-head:hover {
+  background: var(--surface-2);
+}
+
+.tool-status,
+.tool-glyph,
+.tool-chev {
+  display: grid;
+  place-items: center;
   flex: none;
-  width: 14px;
-  text-align: center;
-  font-family: var(--font-mono);
-  color: var(--accent);
 }
 
-.cc-working-text {
-  font-weight: 600;
+.tool-status {
+  width: 16px;
+  height: 16px;
+}
+
+.tool.ok .tool-status {
+  color: var(--ok);
+}
+
+.tool.failed .tool-status,
+.tool.failed .tool-time,
+.tool.failed .tool-output {
+  color: var(--danger);
+}
+
+.tool-glyph,
+.tool-chev {
+  color: var(--text-3);
+}
+
+.tool-verb {
+  font-weight: 500;
   white-space: nowrap;
-  color: var(--accent);
+  color: var(--text);
 }
 
-.cc-working-meta {
+.tool-target {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-3);
+  font-size: 12px;
+  color: var(--text-2);
 }
 
-/* the composer */
-.cc-compose {
-  position: relative;
-  padding: 0 calc(var(--step) * 3) calc(var(--step) * 2);
-}
-
-.cc-box {
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  padding: 9px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface);
-  cursor: text;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-}
-
-.cc-box:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.cc-box.steer {
-  border-color: color-mix(in srgb, var(--warn) 60%, var(--border-strong));
-}
-
-.cc-box.steer:focus-within {
-  border-color: var(--warn);
-  box-shadow: 0 0 0 3px var(--warn-soft);
-}
-
-.cc-prompt {
+.tool-time {
   font-family: var(--font-mono);
-  font-weight: 700;
-  line-height: 22px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--text-3);
-  user-select: none;
 }
 
-.cc-box:focus-within .cc-prompt {
+.tool-chev {
+  transition: transform 150ms ease;
+}
+
+.tool.open .tool-chev {
+  transform: rotate(90deg);
+}
+
+.tool-body {
+  border-block-start: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.tool-output {
+  max-height: 320px;
+  margin: 0;
+  padding: 10px 14px 12px 40px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+/* ---- harness notices */
+
+.m-command pre {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+.m-command.bad pre {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.m-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.m-divider::before,
+.m-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.m-divider span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.m-divider.bad,
+.m-note.bad {
+  color: var(--danger);
+}
+
+.m-note {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.m-error {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13.5px;
+}
+
+.m-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-block-start: -8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.m-footer .icon {
   color: var(--accent);
 }
 
-.cc-box.steer .cc-prompt {
-  color: var(--warn);
+/* ---- the working line */
+
+.working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  font-size: 14px;
 }
 
-.cc-input {
-  min-height: 22px;
-  max-height: 220px;
-  padding: 0;
+.spark {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  animation: spark 2.4s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+@keyframes spark {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(0.78); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 40%, var(--accent) 50%,
+    var(--text-2) 60%, var(--text-2) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 500;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+
+.working-meta {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* ---- the composer */
+
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 10px 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-composer);
+  cursor: text;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.composer:focus-within {
+  border-color: var(--border-strong);
+}
+
+.composer.steer {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+.composer-input {
+  min-height: 48px;
+  max-height: 240px;
+  padding: 2px 0;
   resize: none;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-family: var(--font-ja);
-  font-size: 13px;
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 24px;
+  overflow-y: hidden;
 }
 
-.cc-input::placeholder {
+.chat:not(.is-empty) .composer-input {
+  min-height: 24px;
+}
+
+.composer-input::placeholder {
   color: var(--text-3);
 }
 
-.cc-hints {
-  display: flex;
-  gap: 8px;
-  padding: 5px 4px 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 10.5px;
-  color: var(--text-3);
-}
-
-.cc-hint {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cc-hint.mono {
-  font-family: var(--font-mono);
-}
-
-.cc-hint.steer {
-  color: var(--warn);
-}
-
-/* slash-command completion, above the composer like a terminal's */
-.cc-menu {
-  position: absolute;
-  inset-inline: calc(var(--step) * 3);
-  inset-block-end: calc(100% - 2px);
-  z-index: 5;
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-}
-
-.cc-menu-item {
-  display: grid;
-  grid-template-columns: minmax(84px, auto) minmax(0, 1fr);
-  gap: 12px;
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.cc-menu-item.on {
-  background: var(--accent-soft);
-}
-
-.cc-menu-name {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.cc-menu-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-}
-
-/* first run */
-.cc-welcome {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.cc-welcome-card {
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
-  border-radius: var(--radius);
-  background: linear-gradient(180deg, var(--accent-soft), transparent 75%);
-}
-
-.cc-welcome-title {
+.composer-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 700;
+  gap: 2px;
+  margin-inline-start: -6px;
+  cursor: default;
 }
 
-.cc-welcome-mark {
-  font-size: 15px;
-  color: var(--accent);
-}
-
-.cc-welcome-body {
-  margin: 6px 0 8px;
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--text-2);
-}
-
-.cc-tips {
-  margin: 0;
-  padding-inline-start: 16px;
-  font-size: 11.5px;
-  line-height: 1.8;
-  color: var(--text-3);
-}
-
-.cc-suggestions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.cc-suggestion {
+.cbtn,
+.ctx-ring {
   appearance: none;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12px;
-  text-align: start;
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
-}
-
-.cc-suggestion::before {
-  content: "› ";
-  font-family: var(--font-mono);
-  color: var(--text-3);
-}
-
-.cc-suggestion:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cc-entry,
-  .cc-tool.running .cc-marker,
-  .status-dot.live,
-  .utt.flash {
-    animation: none;
-  }
-}
-
-/* ------------------------------------------------------- sidebar panes */
-
-#side-explorer {
-  padding: 0;
-  gap: 0;
-}
-
-#side-explorer .code-side-head {
-  padding: calc(var(--step) * 2) calc(var(--step) * 3);
-}
-
-#side-explorer .tree {
-  padding: 0 calc(var(--step) * 2) calc(var(--step) * 3);
-}
-
-.outline-list,
-.cmd-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-inline: calc(var(--step) * -2);
-}
-
-.outline-item,
-.cmd-item {
-  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-2);
-  font: inherit;
-  text-align: start;
   cursor: pointer;
 }
 
-.outline-item {
-  display: grid;
-  grid-template-columns: 6px 34px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.outline-item:hover,
-.cmd-item:hover {
+.cbtn:hover,
+.ctx-ring:hover,
+.model-chip:hover {
   background: var(--surface-3);
   color: var(--text);
 }
 
-.outline-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--spk);
+.steer-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--accent);
 }
 
-.outline-time {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-3);
+.model-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.outline-text {
+.model-chip span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.outline-speaker {
-  margin-inline-end: 6px;
-  font-weight: 600;
-  color: var(--spk);
+.send {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-inline-start: 4px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: background 120ms ease, opacity 120ms ease;
 }
 
-.utt.flash {
-  animation: flash 1.4s ease-out;
+.send:hover:not(:disabled) {
+  background: var(--accent-hover);
 }
 
-@keyframes flash {
-  from { background: var(--accent-soft); }
-  to { background: transparent; }
+.send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.send.stop {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.send .icon {
+  stroke-width: 2.4;
+}
+
+.ring-track,
+.ring-arc {
+  fill: none;
+  stroke-width: 2.2;
+}
+
+.ring-track {
+  stroke: var(--border-strong);
+}
+
+.ring-arc {
+  stroke: var(--text-2);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 300ms ease, stroke 200ms ease;
+}
+
+.ctx-ring.warn .ring-arc { stroke: var(--warn); }
+.ctx-ring.bad .ring-arc { stroke: var(--danger); }
+
+.composer-foot {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.chat.is-empty .composer-foot {
+  display: none;
+}
+
+/* ---- slash completion and the context card, both above the composer */
+
+.cmenu,
+.ctx-pop {
+  position: absolute;
+  inset-block-end: calc(100% + 8px);
+  z-index: 10;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  cursor: default;
+}
+
+.cmenu {
+  inset-inline: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.cmenu-item {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  gap: 14px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cmenu-item.on {
+  background: var(--surface-3);
+}
+
+.cmenu-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cmenu-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.ctx-pop {
+  inset-inline-end: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 300px;
+  padding: 14px;
+}
+
+.ctx-pop .note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.ctx-pop .btn {
+  align-self: flex-start;
 }
 
 .kv {
@@ -2758,7 +2800,7 @@ mark.find {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 7px 12px;
   margin: 0;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .kv dt {
@@ -2772,12 +2814,8 @@ mark.find {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text);
-}
-
-.kv dd.busy {
-  color: var(--warn);
 }
 
 .gauge {
@@ -2791,46 +2829,31 @@ mark.find {
   display: block;
   width: 0;
   height: 100%;
-  background: var(--accent);
-  transition: width 200ms ease, background 200ms ease;
+  background: var(--text-2);
+  transition: width 200ms ease;
 }
 
 .gauge i.warn { background: var(--warn); }
 .gauge i.bad { background: var(--danger); }
 
-.gauge-caption {
-  display: flex;
-  justify-content: space-between;
-  margin-block-start: 4px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-3);
+.btn .icon {
+  flex: none;
 }
 
-.cmd-item {
-  display: flex;
-  flex-direction: column;
-  padding: 5px 8px;
-}
+@media (prefers-reduced-motion: reduce) {
+  .spark,
+  .spinner,
+  .rec-dot.live,
+  .sb-item.live .rec-dot,
+  .rec-btn.recording .rec-dot {
+    animation: none;
+  }
 
-.cmd-name {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.cmd-summary {
-  font-size: 11px;
-  color: var(--text-3);
-}
-
-.crumbs .mono {
-  font-family: var(--font-mono);
-}
-
-.status-item.on {
-  color: var(--accent);
+  .shimmer {
+    animation: none;
+    background: none;
+    color: var(--text-2);
+  }
 }
 
 /* ---------------------------------------------------------------- terminal */
