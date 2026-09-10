@@ -9,7 +9,7 @@ English · [日本語](README.ja.md)
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![860 tests](https://img.shields.io/badge/tests-860-brightgreen)
+![892 tests](https://img.shields.io/badge/tests-892-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -168,6 +168,32 @@ read as speech; requiring the correlation peak to be an interior local maximum
 rejects them outright. And one voiced frame is not evidence — a decaying thump
 produced exactly one in its quiet tail and that admitted the whole door. Three
 frames is a vowel; one is a coincidence.
+
+
+**The prompt describes the harness that exists.** It used to be a constant that
+told the model it could run shell commands whether or not the terminal plugin
+was loaded — wrong in both directions, and quietly. Sections are now
+contributions with disposers, like tool registrations, so unloading a plugin
+takes its instructions with it. Ordering is by centrally allocated slot with a
+name tie-break, because a prompt whose bytes depend on plugin load order
+invalidates a provider's prefix cache on a run that changed nothing.
+
+**Slash commands go to the harness, not the model.** `/compact` is not a request
+for the model to summarize — it is an instruction to run a compaction
+transaction, and sending it to the model would produce a polite reply and no
+compaction.
+
+```
+/compact    Summarize the earlier conversation to free context.
+/context    Show how much of the context window is in use.
+/clear      Start a new conversation.
+/stop       Stop the running turn.
+/help       List the commands.
+```
+
+Failure messages say what happened *to the conversation* — unchanged, changed,
+or recorded in the log — because "it didn't work" is useless to someone deciding
+whether their conversation is intact.
 
 ### Running entirely on your own machine
 
@@ -584,7 +610,7 @@ deploy/          Dockerfile, compose, Terraform (ECS Fargate)
 
 ## Testing and CI
 
-860 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
+892 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
 
 CI runs eight jobs on every push:
 

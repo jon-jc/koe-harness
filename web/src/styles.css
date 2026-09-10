@@ -2293,3 +2293,18 @@ mark.find {
 .chat-stop {
   flex: 0 0 auto;
 }
+
+/* A command answers the user, not the model. Rendered as a harness notice so
+   the transcript does not show the assistant replying to "/context". */
+.msg.command .msg-body {
+  background: var(--surface-3, var(--surface-2));
+  border-inline-start: 2px solid var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--text-2);
+}
+
+.msg.command.bad .msg-body {
+  border-inline-start-color: var(--bad, var(--accent));
+}

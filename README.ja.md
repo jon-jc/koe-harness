@@ -9,7 +9,7 @@
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![860 tests](https://img.shields.io/badge/tests-860-brightgreen)
+![892 tests](https://img.shields.io/badge/tests-892-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -206,6 +206,32 @@ koe vad-bench          # 8つの条件で評価。対照列つき
 除外できます。もう1点、有声フレーム1つでは根拠になりません。減衰する打撃音の
 静かな末尾でちょうど1フレームだけ有声と判定され、それだけでドアの音全体が
 通過しました。3フレームは母音、1フレームは偶然です。
+
+
+**システムプロンプトは、実際に搭載されている機能を記述します。** 以前は定数で、
+ターミナルプラグインが読み込まれているかどうかに関わらず「シェルコマンドを実行
+できる」とモデルに伝えていました。両方向に誤りがあり、しかも静かに誤ります。現在
+セクションはツール登録と同じく破棄関数（disposer）を返す寄与であり、プラグインを
+外すとその説明文も一緒に消えます。順序は中央で割り当てられたスロットと名前による
+決定的なタイブレークで決まります。プラグインの読み込み順でプロンプトのバイト列が
+変わると、何も変更していない実行でもプロバイダのプレフィックスキャッシュが失効する
+からです。
+
+**スラッシュコマンドはモデルではなくハーネスに届きます。** `/compact` は「要約して
+ください」というモデルへの依頼ではなく、圧縮トランザクションの実行指示です。モデルに
+送ってしまうと、丁寧な返事が返ってきて圧縮は行われません。
+
+```
+/compact    以前の会話を要約してコンテキストを空ける
+/context    コンテキストウィンドウの使用状況を表示
+/clear      新しい会話を開始
+/stop       実行中のターンを停止
+/help       コマンド一覧
+```
+
+失敗時のメッセージは「会話がどうなったか」を伝えます。変更なし・変更あり・ログに
+記録済みのいずれかです。「うまくいきませんでした」だけでは、会話が無事かどうかを
+判断する人の役に立たないからです。
 
 ### ローカルモデルで完結させる
 
