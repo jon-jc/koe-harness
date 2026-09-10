@@ -9,7 +9,7 @@ English · [日本語](README.ja.md)
 [![CI](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jon-jc/koe-harness/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![TypeScript](https://img.shields.io/badge/client-TypeScript-3178c6)
-![763 tests](https://img.shields.io/badge/tests-763-brightgreen)
+![814 tests](https://img.shields.io/badge/tests-814-brightgreen)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
@@ -63,6 +63,45 @@ dropped 1 unsupported claim(s):
 
 That last line is the point of the whole LLM layer. See
 [Hallucination detection](#hallucination-detection-that-is-a-string-operation).
+
+### Telling a sentence from a door
+
+An energy detector cannot. A door closing is a rise above the room that lasts
+long enough to clear any minimum duration, so it opens an utterance, goes to a
+recognizer, and comes back as a confident transcription of a door — a line in
+the transcript that reads exactly like something a person said. In a meeting
+room the loud non-speech is constant: a chair, a laptop lid, a keyboard, paper.
+
+So koe also asks whether the sound has the *structure* of a voice. Voiced
+speech repeats at 70–350 Hz and its energy sits below 1 kHz; a thud, a click
+and a hiss do none of that. An utterance has to **contain voicing** — not every
+frame, because /s/ is speech too, but somewhere.
+
+```bash
+koe vad-bench          # eight room conditions, with the control column
+```
+
+| | energy only | **+ voicing** |
+|---|---|---|
+| precision | 0.716 | **0.954** |
+| recall | 0.998 | **0.998** |
+| F1 | 0.834 | **0.976** |
+| false alarms per minute | 3.50 | **0.00** |
+| utterances merged with a noise | 2 | **0** |
+| onset error | −796 ms | **−84 ms** |
+
+Recall is unchanged, which is the number that matters most: a detector that
+rejects noise by also rejecting quiet speakers has not improved. It costs about
+1.3× the CPU and still runs 200× faster than realtime, because the expensive
+measurement is *sampled* rather than run on every frame — see
+[`features.py`](src/koe/pipeline/features.py).
+
+Two details that took measuring to find. A naive periodicity score is really a
+*smoothness* score, so 50 Hz mains hum rates 0.71 and a low thump 0.89, and both
+read as speech; requiring the correlation peak to be an interior local maximum
+rejects them outright. And one voiced frame is not evidence — a decaying thump
+produced exactly one in its quiet tail and that admitted the whole door. Three
+frames is a vowel; one is a coincidence.
 
 ### Running entirely on your own machine
 
@@ -146,7 +185,7 @@ flowchart LR
 
     subgraph Server["Server · Python"]
         WS[WebSocket] --> SESS[StreamingSession]
-        SESS --> VAD[VAD + endpointing<br/>adaptive noise floor]
+        SESS --> VAD[VAD + endpointing<br/>adaptive floor + voicing]
         VAD --> ROUTE{Router<br/>budget-aware}
         ROUTE -->|latency| ASR1[fast ASR]
         ROUTE -->|quality| ASR2[accurate ASR]
@@ -464,8 +503,8 @@ src/koe/
     llm/         Anthropic + OpenAI adapters
     local/       On-device: server discovery, OpenAI-compatible client, Whisper
   routing/       Budgets, circuit breakers, fallback chains
-  evaluation/    CER/WER/DER, bootstrap CIs, regression gates, corpus
-  pipeline/      VAD, endpointing, stabilization, streaming sessions
+  evaluation/    CER/WER/DER, VAD scoring, bootstrap CIs, gates, corpus
+  pipeline/      VAD, acoustic features, endpointing, stabilization, sessions
   minutes/       議事録 schema, prompts, guardrails, generator
   telemetry/     Cost ledger, metrics, structured logging
   api/           FastAPI + WebSocket
@@ -478,7 +517,7 @@ deploy/          Dockerfile, compose, Terraform (ECS Fargate)
 
 ## Testing and CI
 
-763 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
+814 tests, `mypy --strict` clean, `ruff` clean, `tsc --noEmit` clean.
 
 CI runs eight jobs on every push:
 

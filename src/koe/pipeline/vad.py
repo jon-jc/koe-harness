@@ -6,14 +6,46 @@ sluggish; cut too early and you truncate someone mid-sentence and the ASR
 mis-recognizes the fragment. It is a latency/accuracy trade with no free
 option, so it is exposed as configuration rather than buried in a constant.
 
-The detector is energy-based with an **adaptive noise floor**. A fixed
-threshold works in a quiet room and fails in every real one: an office at 45 dB
-and a café at 65 dB need different absolute cut-offs, and a laptop's automatic
-gain control moves the floor around during a call. Tracking the floor from the
-quietest recent frames means the threshold follows the room.
+The detector has two halves, and they answer different questions.
 
-Everything below is about the floor, because every way this detector has
-failed has been a way of getting the floor wrong.
+**Energy decides where something is happening**, against an **adaptive noise
+floor**. A fixed threshold works in a quiet room and fails in every real one: an
+office at 45 dB and a café at 65 dB need different absolute cut-offs, and a
+laptop's automatic gain control moves the floor around during a call. Tracking
+the floor from the quietest recent frames means the threshold follows the room.
+
+**Structure decides whether that something is a person.** Energy cannot: a door
+closing is a rise above the room that lasts long enough to clear any minimum
+duration, and an energy detector opens an utterance for it, sends it to a
+recognizer, and gets back a confident transcription of a door. In a meeting room
+the loud non-speech events are constant -- a laptop lid, a chair, a keyboard,
+paper, a cough -- and each one costs a recognition request and a line of nonsense
+that reads exactly like something a person said.
+
+So an utterance must **contain voicing** to be emitted. Not every frame: speech
+is voiced *or* unvoiced, and requiring every frame to be periodic would cut /s/
+off the front of every word that starts with one. The rule is about the
+utterance, because "was that speech" is a question asked once, at the end.
+
+Nor is one voiced frame enough to settle it. A decaying thump produced exactly
+one frame in its quiet tail that scored periodic, and admitted the whole door.
+Three frames is a vowel; one is a coincidence. :mod:`koe.pipeline.features`
+measures the evidence, and what it costs is described there.
+
+The same measurement does a second job: **a run of loud frames with no voicing
+in it stops holding an utterance open.** This is what keeps a noise from
+*merging* with the sentence beside it. A keyboard is loud enough to keep
+resetting the endpoint timer, so without it the typing and the sentence after it
+arrive as one segment -- measured, 3.4 seconds of keyboard glued to the front of
+an utterance, with half of what reached the recognizer being furniture.
+
+Measured across eight conditions in
+``koe.evaluation.acoustics``: precision 0.72 to 0.95, false alarms 3.5 per
+minute to zero, merged utterances 2 to 0, with recall unchanged at 0.998 and
+about 1.3x the CPU.
+
+The rest of this is about the floor, because every way this detector has failed
+in production has been a way of getting the floor wrong.
 
 * **The floor is a low quantile of a sliding window, not a running average of
   whatever was not called speech.** The averaging version is a positive
@@ -61,13 +93,18 @@ Two more asymmetries have nothing to do with the floor:
 from __future__ import annotations
 
 import array
-import math
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 from koe.domain.audio import AudioChunk, AudioFormat, Encoding
+from koe.pipeline import features
+from koe.pipeline.features import Frame, energy_db
 from koe.text.script import Language
+
+#: Kept at its original name and location because it is part of this module's
+#: surface; the implementation now lives with the other frame measurements.
+frame_energy_db = energy_db
 
 
 class SpeechState(StrEnum):
@@ -130,6 +167,46 @@ class VADConfig:
     #: detector triggers on nothing at all.
     min_noise_floor_db: float = -75.0
 
+    #: Require an utterance to contain voicing before it is emitted. This is
+    #: what separates a sentence from a door, and energy cannot do it: see the
+    #: module docstring.
+    require_voicing: bool = True
+    #: Voiced frames an utterance needs before it counts as speech.
+    #:
+    #: Not one. One is a coincidence: a decaying 68 Hz thump produced exactly
+    #: one frame in its quiet tail that scored periodic, and that single frame
+    #: was enough to admit the whole door. Three is a vowel -- voicing runs
+    #: 100-200 ms, which is five to ten frames -- so a real utterance clears
+    #: this without trying and an accident does not.
+    min_voiced_frames: int = 3
+    #: How many loud frames to look at every frame before backing off. A real
+    #: utterance voices within a syllable or two, so the answer normally
+    #: arrives well inside this.
+    voicing_probe_frames: int = 40
+    #: After that, look every Nth frame instead of stopping -- and keep looking
+    #: for the rest of the utterance. Sampling rather than abandoning, because
+    #: voicing can arrive late: a rustle or a keyboard burst that runs into the
+    #: sentence behind it opens the utterance, spends the dense budget on noise,
+    #: and the speech that follows would never be measured at all. That cost a
+    #: real utterance in the benchmark. Every tenth frame is a fifth of a second
+    #: and a twentieth of the price.
+    voicing_recheck_frames: int = 10
+    #: How long an open utterance may stay loud without any voicing before it
+    #: stops being held open.
+    #:
+    #: This is what stops a noise *merging* with the sentence next to it. A
+    #: keyboard is loud enough to keep resetting the endpoint timer, so without
+    #: this the typing and the sentence after it become one segment: measured,
+    #: 3.4 seconds of keyboard arrived glued to the front of an utterance and
+    #: half of what reached the recognizer was furniture.
+    #:
+    #: 400 ms is chosen to be longer than any fricative -- /s/ runs 50-200 ms --
+    #: so the rule cannot cut inside a word. The case it does get wrong is
+    #: whispering, which is unvoiced throughout; koe would end a whispered
+    #: utterance early. That is a real cost, accepted because whispering into a
+    #: meeting recorder is rare and typing beside one is not.
+    max_unvoiced_run_ms: float = 400.0
+
     @property
     def release_threshold_db(self) -> float:
         """dB above the floor for a frame to *keep* an open utterance open."""
@@ -162,23 +239,6 @@ class SpeechSegment:
         return self.end - self.start
 
 
-def frame_energy_db(samples: array.array[int]) -> float:
-    """RMS energy of a frame in dBFS.
-
-    Silence returns -100 rather than -inf so the noise-floor tracker stays
-    finite; an infinity here propagates into every threshold comparison.
-    """
-    if not samples:
-        return -100.0
-    total = 0.0
-    for sample in samples:
-        total += float(sample) * float(sample)
-    rms = math.sqrt(total / len(samples))
-    if rms <= 0:
-        return -100.0
-    return 20.0 * math.log10(rms / 32768.0)
-
-
 @dataclass(slots=True)
 class VAD:
     """Streaming voice activity detector with endpointing.
@@ -199,6 +259,20 @@ class VAD:
     _pending: bytearray = field(default_factory=bytearray, init=False, repr=False)
     _recent: deque[float] = field(default_factory=deque, init=False, repr=False)
     _frames_seen: int = field(default=0, init=False)
+
+    #: Decimated audio for the pitch search. A 20 ms frame is far too short to
+    #: see a 75 Hz period, so periodicity runs over a rolling window rather
+    #: than the frame in isolation.
+    _decimated: deque[int] = field(default_factory=deque, init=False, repr=False)
+    #: Voicing evidence for the utterance in progress. Per utterance, not per
+    #: frame: the question "was that speech" is asked once, at the end.
+    _voiced_frames: int = field(default=0, init=False)
+    _probes_spent: int = field(default=0, init=False)
+    #: Milliseconds of loud audio since voicing was last seen.
+    _unvoiced_run_ms: float = field(default=0.0, init=False)
+    #: The most recent frame's measurements, for the UI and for debugging a
+    #: session that is deciding something surprising.
+    _last: Frame = field(default_factory=lambda: Frame(energy_db=-100.0), init=False)
 
     @property
     def state(self) -> SpeechState:
@@ -254,6 +328,7 @@ class VAD:
         config = self.config
         frame_ms = config.frame_ms
         self._observe(energy_db)
+        self._remember_decimated(samples)
 
         if self.calibrating:
             # Nothing counts as speech until the room is known. Committing to a
@@ -273,6 +348,49 @@ class VAD:
             else config.speech_threshold_db
         )
         is_speech = energy_db > self._noise_floor_db + margin
+
+        # Energy proposes, spectrum disposes. The shape of a frame is only
+        # measured when the frame is loud enough to matter, which in a quiet
+        # room is a small fraction of them and in a noisy one is the fraction
+        # that could actually be an event.
+        self._last = features.describe(samples, energy=energy_db) if is_speech else Frame(energy_db)
+        if is_speech:
+            self._measure_voicing()
+
+        # Time since voicing was last seen, counted over *every* frame of an
+        # open utterance rather than only the loud ones. Counting only loud
+        # frames looks more careful and does not work: a keyboard is a burst
+        # every 140 ms, so the quiet between two clicks reset the run before it
+        # could ever reach the limit, and the typing went on holding the
+        # utterance open exactly as before.
+        #
+        # Counting quiet frames too is safe because the rule only ever takes
+        # away a loud frame's ability to reset the endpoint timer. During a
+        # genuine pause the timer is already running, so tripping the rule
+        # changes nothing about when that pause ends the utterance.
+        if self._state is SpeechState.SPEECH:
+            self._unvoiced_run_ms += frame_ms
+        else:
+            self._unvoiced_run_ms = 0.0
+
+        if (
+            config.require_voicing
+            and is_speech
+            and self._state is SpeechState.SPEECH
+            and self._unvoiced_run_ms >= config.max_unvoiced_run_ms
+        ):
+            # Still loud, but nothing about it has been speech for longer than
+            # any fricative lasts. Releasing it lets the endpoint timer run, so
+            # the utterance closes where the speaking stopped instead of being
+            # dragged along by whatever is making the noise.
+            #
+            # Gated on `require_voicing` because it *depends* on the voicing
+            # measurement: with the measurement off nothing ever resets the
+            # run, and every utterance over 400 ms would be cut. That mistake
+            # briefly made the benchmark's own baseline look far worse than it
+            # is, which is a good argument for always reading the control
+            # column rather than only the delta.
+            is_speech = False
 
         self._adapt_floor(is_speech)
 
@@ -306,6 +424,49 @@ class VAD:
                     segment = self._close("max-duration")
 
         return segment
+
+    def _remember_decimated(self, samples: array.array[int]) -> None:
+        """Keep just enough decimated audio for one pitch search."""
+        self._decimated.extend(features.decimate(samples))
+        while len(self._decimated) > features.PERIODICITY_SAMPLES:
+            self._decimated.popleft()
+
+    def _measure_voicing(self) -> None:
+        """Look for voicing on this frame, if looking would tell us anything.
+
+        Two questions are being answered by one measurement, which is why the
+        sampling schedule is not simply "until we find some".
+
+        *Is this an utterance at all* -- answered once, so the search is dense
+        until the first voiced frame and then stops mattering.
+
+        *Is it still an utterance* -- answered continuously, because a sentence
+        that has ended into a keyboard is not still a sentence, and the only
+        way to know is to keep looking. So after the dense budget, and after
+        voicing is found, the measurement keeps running at a tenth of the rate,
+        which is cheap enough to leave on for the length of a call.
+        """
+        config = self.config
+        if not config.require_voicing:
+            return
+
+        recheck = max(1, config.voicing_recheck_frames)
+        proven = self._voiced_frames >= config.min_voiced_frames
+        dense = not proven and self._probes_spent < config.voicing_probe_frames
+        if not dense and self._frames_seen % recheck:
+            return
+
+        self._probes_spent += 1
+        score = features.periodicity(array.array("i", self._decimated))
+        self._last = Frame(
+            energy_db=self._last.energy_db,
+            zcr=self._last.zcr,
+            tilt_db=self._last.tilt_db,
+            periodicity=score,
+        )
+        if self._last.voiced:
+            self._voiced_frames += 1
+            self._unvoiced_run_ms = 0.0
 
     def _observe(self, energy_db: float) -> None:
         """Record one frame's energy in the sliding window."""
@@ -352,12 +513,32 @@ class VAD:
     def _close(self, reason: str) -> SpeechSegment | None:
         end = self._position - (self._silence_ms / 1000.0 if reason == "endpoint" else 0.0)
         start = self._speech_start
+        voiced = self._voiced_frames
+        probed = self._probes_spent
+
         self._state = SpeechState.SILENCE
         self._consecutive_speech = 0
         self._silence_ms = 0.0
+        self._voiced_frames = 0
+        self._probes_spent = 0
+        self._unvoiced_run_ms = 0.0
 
         if (end - start) * 1000.0 < self.config.min_utterance_ms:
-            return None  # a cough, a door, a keyboard
+            return None  # too short to be a sentence
+
+        if self.config.require_voicing and probed and voiced < self.config.min_voiced_frames:
+            # Loud, long enough, and never periodic for as long as a vowel
+            # lasts: a door, a chair, a keyboard, paper. Emitting it costs a
+            # recognition request and
+            # returns a confident transcription of furniture -- which is worse
+            # than emitting nothing, because it lands in the transcript looking
+            # exactly like something a person said.
+            #
+            # `probed` guards the case where nothing was measured at all, so a
+            # configuration that never looks cannot silently discard every
+            # utterance.
+            return None
+
         return SpeechSegment(start=start, end=end, reason=reason)
 
     def flush(self) -> SpeechSegment | None:
@@ -370,6 +551,16 @@ class VAD:
             return None
         return self._close("flush")
 
+    @property
+    def last_frame(self) -> Frame:
+        """The most recent frame's measurements.
+
+        Exposed so a UI can show *why* a decision went the way it did, and so a
+        session that is behaving strangely can be diagnosed from the numbers
+        rather than from a level meter.
+        """
+        return self._last
+
     def reset(self) -> None:
         self._state = SpeechState.SILENCE
         self._consecutive_speech = 0
@@ -378,4 +569,8 @@ class VAD:
         self._position = 0.0
         self._pending.clear()
         self._recent.clear()
+        self._decimated.clear()
         self._frames_seen = 0
+        self._voiced_frames = 0
+        self._probes_spent = 0
+        self._unvoiced_run_ms = 0.0

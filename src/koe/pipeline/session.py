@@ -62,6 +62,23 @@ class SessionConfig:
     vad: VADConfig | None = None
     emit_partials: bool = True
 
+    #: Audio sent to the recognizer *before* the detected start of speech.
+    #:
+    #: An endpointer detects speech once it is already underway -- it needs
+    #: evidence, and evidence takes frames. Handing a recognizer audio that
+    #: begins at that moment hands it a word with its first consonant already
+    #: gone, and a recognizer given half a word does not report half a word, it
+    #: reports a different one. The onset frames are back-dated by the detector
+    #: for the same reason; this is the remaining margin, and it also covers a
+    #: low-energy onset the detector could not have seen at all: /f/, /h/, /s/
+    #: and, in Japanese, the devoiced vowels that begin します and しました.
+    preroll_ms: float = 150.0
+    #: And after the detected end, for the mirror-image reason. Japanese needs
+    #: this more than English does: the sentence-final verb carries the
+    #: negation and the tense, and it is trailing off in volume exactly where
+    #: the endpointer is deciding to stop.
+    postroll_ms: float = 150.0
+
     def vad_config(self) -> VADConfig:
         return self.vad or VADConfig.for_language(self.language)
 
@@ -249,6 +266,26 @@ class StreamingSession:
             ),
         )
 
+    def _recognition_prompt(self) -> str | None:
+        """The user's vocabulary, as a biasing prompt for the recognizer.
+
+        Biasing *before* the decode beats correcting after it, and by a wide
+        margin: a recognizer told that "山本" is a word in play will produce it,
+        where a correction applied afterwards can only repair the cases whose
+        misrecognition someone already anticipated and wrote a rule for. Both
+        paths run, because not every provider accepts a prompt -- and the ones
+        that do not are exactly the ones that need the corrections.
+
+        None rather than an empty string when there is nothing to say: an empty
+        prompt is a real prompt to several providers, and one of them will
+        eventually treat it as an instruction to produce nothing.
+        """
+        vocabulary = self.ctx.get("vocabulary")
+        if vocabulary is None:
+            return None
+        hint = str(vocabulary.prompt_hint() or "")
+        return hint or None
+
     def _corrected(self, text: str) -> str:
         """Apply the user's vocabulary, if one is mounted.
 
@@ -265,10 +302,20 @@ class StreamingSession:
     async def _finalize(self, speech: SpeechSegment) -> None:
         await self._cancel_partial()
 
-        chunk = self._utterance_audio(speech.start, speech.end)
+        # Padded on both sides: see `preroll_ms`. Clamped to what is actually
+        # retained, so the first utterance of a session -- where there is no
+        # earlier audio to borrow -- is simply not padded rather than skewed.
+        padded_start = max(self._retained_start, speech.start - self.config.preroll_ms / 1000.0)
+        padded_end = min(self._position, speech.end + self.config.postroll_ms / 1000.0)
+
+        chunk = self._utterance_audio(padded_start, padded_end)
         if chunk is not None:
             try:
-                result = await self.asr.transcribe(chunk, language=self.config.language or None)
+                result = await self.asr.transcribe(
+                    chunk,
+                    language=self.config.language or None,
+                    prompt=self._recognition_prompt(),
+                )
             except ProviderError as exc:
                 logger.warning("recognition failed for %s: %s", self.session_id, exc)
                 result = None

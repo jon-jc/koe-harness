@@ -8,7 +8,7 @@ import random
 
 import pytest
 
-from koe.domain.audio import STANDARD_FORMAT
+from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.kernel.context import Context
 from koe.pipeline.session import PartialEvent, SessionConfig, StreamingSession
 from koe.pipeline.stabilizer import Stabilizer, common_prefix
@@ -483,6 +483,133 @@ async def test_a_session_without_the_plugin_transcribes_unchanged() -> None:
 
     text = "".join(seg.text for seg in session.transcript().final_segments)
     assert "第三四半期" in text
+
+
+async def test_the_recognizer_is_given_audio_from_before_the_detected_onset() -> None:
+    """An endpointer detects speech once it is already underway, so audio that
+    begins at that moment begins with the first consonant already gone -- and a
+    recognizer given half a word reports a different word, not half a one."""
+    ctx = Context()
+    seen: list[AudioChunk] = []
+
+    class Recording(MockASR):
+        async def transcribe(self, audio, *, language=None, prompt=None):
+            seen.append(audio)
+            return await super().transcribe(audio, language=language, prompt=prompt)
+
+    session = StreamingSession(
+        ctx,
+        Recording(script=MEETING_JA[:1], degradation=0.0),
+        config=SessionConfig(
+            language=Language.JA,
+            emit_partials=False,
+            preroll_ms=200.0,
+            postroll_ms=200.0,
+            vad=VADConfig(silence_to_end_ms=300.0),
+        ),
+    )
+
+    async with session:
+        await session.push_audio(quiet(600))
+        await session.push_audio(tone(800))
+        await session.push_audio(quiet(600))
+
+    assert seen
+    padded = seen[-1]
+    detected = session.transcript().final_segments[0]
+    # The chunk is longer than the span the detector reported.
+    assert padded.duration > (detected.end - detected.start)
+
+
+async def test_padding_does_not_run_past_what_was_recorded() -> None:
+    """The first utterance of a session has no earlier audio to borrow, and
+    must simply not be padded rather than be skewed."""
+    ctx = Context()
+    session = StreamingSession(
+        ctx,
+        MockASR(script=MEETING_JA[:1], degradation=0.0),
+        config=SessionConfig(
+            language=Language.JA,
+            emit_partials=False,
+            preroll_ms=5_000.0,
+            postroll_ms=5_000.0,
+            vad=VADConfig(silence_to_end_ms=300.0),
+        ),
+    )
+
+    async with session:
+        await session.push_audio(quiet(400))
+        await session.push_audio(tone(800))
+        await session.push_audio(quiet(600))
+
+    assert session.transcript().final_segments
+
+
+async def test_the_user_vocabulary_is_sent_to_the_recognizer_as_a_prompt() -> None:
+    """Biasing before the decode beats correcting after it: a recognizer told
+    a name is in play produces it, where a correction can only repair the
+    misrecognitions somebody already anticipated."""
+    ctx = Context()
+    store = VocabularyStore()
+    store.save("山本\nCoe => koe")
+    ctx.provide("vocabulary", store, replace=True)
+
+    prompts: list[str | None] = []
+
+    class Recording(MockASR):
+        async def transcribe(self, audio, *, language=None, prompt=None):
+            prompts.append(prompt)
+            return await super().transcribe(audio, language=language, prompt=prompt)
+
+    session = StreamingSession(
+        ctx,
+        Recording(script=MEETING_JA[:1], degradation=0.0),
+        config=SessionConfig(
+            language=Language.JA,
+            emit_partials=False,
+            vad=VADConfig(silence_to_end_ms=300.0),
+        ),
+    )
+
+    async with session:
+        await session.push_audio(quiet(400))
+        await session.push_audio(tone(800))
+        await session.push_audio(quiet(600))
+
+    assert prompts
+    assert "山本" in (prompts[-1] or "")
+    # The written form, not the misrecognition it exists to fix.
+    assert "koe" in (prompts[-1] or "")
+
+
+async def test_no_vocabulary_sends_no_prompt_rather_than_an_empty_one() -> None:
+    """An empty prompt is a real prompt to several providers, and one of them
+    will eventually read it as an instruction to produce nothing."""
+    ctx = Context()
+    prompts: list[str | None] = []
+
+    class Recording(MockASR):
+        async def transcribe(self, audio, *, language=None, prompt=None):
+            prompts.append(prompt)
+            return await super().transcribe(audio, language=language, prompt=prompt)
+
+    session = StreamingSession(
+        ctx,
+        Recording(script=MEETING_JA[:1], degradation=0.0),
+        config=SessionConfig(
+            language=Language.JA,
+            emit_partials=False,
+            vad=VADConfig(silence_to_end_ms=300.0),
+        ),
+    )
+
+    async with session:
+        await session.push_audio(quiet(400))
+        await session.push_audio(tone(800))
+        await session.push_audio(quiet(600))
+
+    assert prompts
+    assert prompts[-1] is None
 
 
 async def test_partials_are_emitted_while_speaking() -> None:
