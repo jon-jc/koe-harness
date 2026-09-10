@@ -120,6 +120,7 @@ export type Section =
   | "recognition"
   | "models"
   | "plugins"
+  | "vocabulary"
   | "appearance"
   | "about";
 
@@ -128,9 +129,17 @@ const SECTIONS: readonly Section[] = [
   "recognition",
   "models",
   "plugins",
+  "vocabulary",
   "appearance",
   "about",
 ];
+
+interface VocabularyState {
+  readonly enabled: boolean;
+  readonly text: string;
+  readonly entries: number;
+  readonly terms: readonly string[];
+}
 
 interface PluginRecord {
   name: string;
@@ -163,6 +172,8 @@ export class SettingsDialog {
   private health: Health | null = null;
   private devices: InputDevice[] = [];
   private pluginListing: PluginListing | null = null;
+  private vocabulary: VocabularyState | null = null;
+  private vocabularyDraft: string | null = null;
   private toolRecords: ToolRecord[] = [];
   /** A short-lived capture used only to prove the chosen source works. */
   private probe: AudioCapture | null = null;
@@ -233,6 +244,7 @@ export class SettingsDialog {
       this.loadHealth(),
       this.loadDevices(),
       this.loadPlugins(),
+      this.loadVocabulary(),
     ]);
     this.render();
   }
@@ -266,6 +278,21 @@ export class SettingsDialog {
     this.devices = await listInputDevices();
   }
 
+  private async loadVocabulary(): Promise<void> {
+    try {
+      const response = await fetch("/v1/vocabulary");
+      if (response.ok) {
+        this.vocabulary = (await response.json()) as VocabularyState;
+        // Only adopt the server's text when nothing is being typed. Clobbering
+        // a half-written list because a background refresh landed is the kind
+        // of thing people do not report, they just stop using the feature.
+        if (this.vocabularyDraft === null) this.vocabularyDraft = this.vocabulary.text;
+      }
+    } catch {
+      /* the section says it could not load rather than rendering empty */
+    }
+  }
+
   private async loadPlugins(): Promise<void> {
     try {
       const [plugins, tools] = await Promise.all([
@@ -288,6 +315,7 @@ export class SettingsDialog {
       recognition: s.secRecognition,
       models: s.secModels,
       plugins: s.secPlugins,
+      vocabulary: s.secVocabulary,
       appearance: s.secAppearance,
       about: s.secAbout,
     };
@@ -317,9 +345,11 @@ export class SettingsDialog {
             ? this.modelsSection()
             : this.section === "plugins"
               ? this.pluginsSection()
-              : this.section === "appearance"
-              ? this.appearanceSection()
-              : this.aboutSection()),
+              : this.section === "vocabulary"
+                ? this.vocabularySection()
+                : this.section === "appearance"
+                  ? this.appearanceSection()
+                  : this.aboutSection()),
     );
     this.body.scrollTop = 0;
   }
@@ -725,6 +755,85 @@ export class SettingsDialog {
   }
 
   /* ------------------------------------------------------------- plugins */
+
+  private vocabularySection(): HTMLElement[] {
+    const s = this.strings;
+    const state = this.vocabulary;
+    const parts: HTMLElement[] = [];
+
+    if (!state) {
+      parts.push(h("p", { class: "note", text: s.cannotConnect }));
+      return parts;
+    }
+    if (!state.enabled) {
+      parts.push(h("p", { class: "note", text: s.vocabularyOff }));
+      return parts;
+    }
+
+    parts.push(h("p", { class: "note", style: "margin:0 0 6px", text: s.vocabularyHint }));
+    parts.push(h("p", { class: "note", style: "margin:0 0 14px", text: s.vocabularyFormat }));
+
+    const editor = h("textarea", {
+      class: "vocab-editor",
+      rows: "12",
+      spellcheck: "false",
+      autocapitalize: "off",
+      autocomplete: "off",
+      placeholder: s.vocabularyPlaceholder,
+      "aria-label": s.secVocabulary,
+    }) as HTMLTextAreaElement;
+    editor.value = this.vocabularyDraft ?? state.text;
+
+    const status = h("span", {
+      class: "note",
+      text: `${state.entries} ${s.vocabularyCount}`,
+    });
+    const save = h("button", { class: "btn", type: "button", text: s.vocabularySave });
+
+    // Tracked without re-rendering: rebuilding the panel on every keystroke
+    // would move the caret to the end of the box on every keystroke.
+    editor.addEventListener("input", () => {
+      this.vocabularyDraft = editor.value;
+      save.disabled = false;
+    });
+    save.addEventListener("click", () => void this.saveVocabulary(editor, save, status));
+
+    const actions = h("div", { class: "row", style: "margin-top:12px;align-items:center;gap:10px" });
+    actions.append(save, status);
+
+    parts.push(editor, actions);
+    return parts;
+  }
+
+  private async saveVocabulary(
+    editor: HTMLTextAreaElement,
+    save: HTMLButtonElement,
+    status: HTMLElement,
+  ): Promise<void> {
+    const s = this.strings;
+    save.disabled = true;
+    try {
+      const response = await fetch("/v1/vocabulary", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: editor.value }),
+      });
+      if (!response.ok) {
+        status.textContent = s.vocabularyOff;
+        return;
+      }
+      const saved = (await response.json()) as VocabularyState;
+      this.vocabulary = saved;
+      // Adopt the canonical text the server stored, so the box shows what was
+      // actually saved rather than what was typed at it.
+      this.vocabularyDraft = saved.text;
+      editor.value = saved.text;
+      status.textContent = `${s.vocabularySaved} · ${saved.entries} ${s.vocabularyCount}`;
+    } catch {
+      status.textContent = s.cannotConnect;
+      save.disabled = false;
+    }
+  }
 
   private pluginsSection(): HTMLElement[] {
     const s = this.strings;

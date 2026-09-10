@@ -233,7 +233,7 @@ class StreamingSession:
         except asyncio.CancelledError:
             raise
 
-        text = result.text
+        text = self._corrected(result.text)
         if not text:
             return
 
@@ -248,6 +248,19 @@ class StreamingSession:
                 start=self._retained_start,
             ),
         )
+
+    def _corrected(self, text: str) -> str:
+        """Apply the user's vocabulary, if one is mounted.
+
+        Applied to partials as well as finals, which costs a pass over a short
+        string and buys the panel not flickering between the misrecognition and
+        its correction as an utterance settles. Absent the plugin this is the
+        identity, which is the behaviour that predates it.
+        """
+        if not text:
+            return text
+        vocabulary = self.ctx.get("vocabulary")
+        return text if vocabulary is None else str(vocabulary.apply(text))
 
     async def _finalize(self, speech: SpeechSegment) -> None:
         await self._cancel_partial()
@@ -267,8 +280,9 @@ class StreamingSession:
                     cost_usd=self.asr.info.estimate_audio_cost(chunk.duration),
                 )
 
-            if result is not None and result.text:
-                stabilized = self._stabilizer.finalize(result.text)
+            corrected = self._corrected(result.text) if result is not None else ""
+            if result is not None and corrected:
+                stabilized = self._stabilizer.finalize(corrected)
                 # Carry through a speaker label if the backend produced one.
                 # Fused ASR+diarization backends attribute segments themselves,
                 # and dropping that here would silently discard the answer to

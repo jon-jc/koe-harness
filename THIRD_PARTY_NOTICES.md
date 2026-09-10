@@ -59,6 +59,56 @@ tools and their output is the bundle itself.
 | [esbuild](https://github.com/evanw/esbuild) | MIT | Bundler |
 | [typescript](https://github.com/microsoft/TypeScript) | Apache-2.0 | Type checker |
 
+## Adapted source
+
+Not a dependency, and not merely an influence: code here was **derived from**
+the following, which is why its license text is reproduced in full.
+
+### OpenWhispr
+
+<https://github.com/OpenWhispr/openwhispr> — MIT License, Copyright (c) 2024
+OpenWhispr Team.
+
+Three pieces of OpenWhispr's dictation workflow were adapted for koe. In each
+case what carried over is a rule about text and the reasoning behind it,
+reimplemented in Python against koe's own script analysis:
+
+| koe | from | what was taken |
+|---|---|---|
+| `src/koe/text/spacing.py` | `src/helpers/smartSpacing.js` | The codepoint ranges for scripts that do not separate words, and the decision to exclude Hangul from them |
+| `src/koe/text/thinking.py` | `src/helpers/stripThinking.js` | The three-pass ordering: innermost closed pairs, then an unterminated trailing block, then orphan closing tags |
+| `src/koe/text/vocabulary.py` | the user dictionary and `src/helpers/dictionaryImport.js` | A user-editable word list as the answer to proper nouns, and the lenient import format |
+
+Where koe departs, the module docstring says so and why. The two substantial
+departures: spacing is decided from both sides of a seam rather than the left
+side alone, because koe holds both fragments where a paste-at-cursor does not;
+and vocabulary matching changes strategy by script, because word-boundary
+anchoring cannot work in Japanese.
+
+```
+MIT License
+
+Copyright (c) 2024 OpenWhispr Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Prior art and design influence
 
 Not dependencies — no code is copied from either — but the design owes them a

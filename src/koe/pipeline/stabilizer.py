@@ -31,11 +31,35 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from koe.text.script import Language, primary_language
-from koe.text.tokenize import surfaces, tokenizer_for
+from koe.text.spacing import join_tokens
+from koe.text.tokenize import CharacterTokenizer, surfaces, tokenizer_for
+
+
+def _word_level(language: Language) -> bool:
+    """Whether this language's tokenizer segments on word boundaries.
+
+    Cheap: `tokenizer_for` is memoized, so this is a dict lookup and an
+    attribute read rather than a tagger construction.
+    """
+    return tokenizer_for(language).name != CharacterTokenizer.name
 
 
 def _join(tokens: list[str], language: Language) -> str:
-    return "".join(tokens) if language is not Language.EN else " ".join(tokens)
+    """Rejoin tokens, spacing each seam by the scripts that meet at it.
+
+    One rule per *seam*, not one per language. A Japanese utterance containing
+    an English phrase -- which is most of them in a Japanese office -- needs the
+    space inside "KPI dashboard" and no space around の, and a per-language rule
+    can deliver only one of those. Joining a Japanese utterance with "" is what
+    turned the vocabulary correction "KPI dashboard" into "KPIdashboard" the
+    first time one ran.
+
+    The reconstruction is only attempted when the tokenizer segmented on words.
+    Without MeCab the Japanese fallback is one token per character, which
+    destroys the evidence rather than merely omitting it -- see
+    :func:`koe.text.spacing.join_tokens`.
+    """
+    return join_tokens(tokens, language, word_level=_word_level(language))
 
 
 @dataclass(frozen=True, slots=True)

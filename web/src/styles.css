@@ -2201,3 +2201,34 @@ mark.find {
   background: var(--surface-2);
   font-size: 11px;
 }
+
+/* The vocabulary editor: a plain text box, because the stored thing is a plain
+   text file and a structured editor would make the panel and the file two
+   different things people have to keep in their heads. */
+.vocab-editor {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--text);
+  /* Monospace so that the => in one entry lines up with the => in the next,
+     which is how a list of rules is read for mistakes. */
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.vocab-editor:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.vocab-editor::placeholder {
+  color: var(--text-3);
+}

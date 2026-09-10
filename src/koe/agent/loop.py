@@ -41,6 +41,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from koe.text.thinking import strip_thinking
 from koe.tools.registry import ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -233,16 +234,23 @@ class Conversation:
             output_tokens += reply.output_tokens
             cost += reply.cost_usd
 
-            if reply.text:
-                answer = reply.text
-                await emit("assistant/text", {"text": reply.text, "step": steps})
+            # Reasoning models return their scratchpad in <think> tags. Strip it
+            # once, here, rather than at each of the three places it otherwise
+            # leaks: the event a UI renders, the answer this turn returns, and
+            # the message history -- where it would also be re-sent as context
+            # on every following turn, paid for again each time.
+            text = strip_thinking(reply.text)
+
+            if text:
+                answer = text
+                await emit("assistant/text", {"text": text, "step": steps})
 
             if not reply.wants_tools:
-                self.messages.append(ChatMessage(role="assistant", content=reply.text))
+                self.messages.append(ChatMessage(role="assistant", content=text))
                 break
 
             self.messages.append(
-                ChatMessage(role="assistant", content=reply.text, tool_calls=reply.tool_calls)
+                ChatMessage(role="assistant", content=text, tool_calls=reply.tool_calls)
             )
 
             results: list[ToolResult] = []
