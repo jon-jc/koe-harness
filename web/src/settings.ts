@@ -1519,7 +1519,11 @@ export class ShortcutsDialog {
     const grid = h("div", { class: "keys" });
     const rows: Array<[string, string]> = [
       ["Ctrl+K", s.paletteSearch],
-      ["Ctrl+1…4", s.shortcutWorkspace],
+      ["Ctrl+B", s.shortcutSidebar],
+      ["Ctrl+J", s.shortcutPanel],
+      ["Ctrl+L", s.shortcutAgent],
+      ["Ctrl+Shift+L", s.shortcutAgentPanel],
+      ["Ctrl+1…3", s.shortcutTabs],
       ["Space", s.toggleRecord],
       ["/", s.shortcutSearch],
       [",", s.shortcutSettings],

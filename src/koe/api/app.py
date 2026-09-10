@@ -43,6 +43,7 @@ from koe.config import Settings, get_settings
 from koe.domain.audio import STANDARD_FORMAT, AudioChunk
 from koe.domain.transcript import Segment, Transcript, attribute_speakers
 from koe.harness import AgentRegistry, HarnessAgent
+from koe.harness.commands import builtin_commands
 from koe.harness.profile import apply_profile
 from koe.harness.profile import load as load_profile
 from koe.harness.prompt import SystemPrompt
@@ -1264,8 +1265,11 @@ async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
                     await emit("cancelled", {"agent": handle.agent.id})
                 continue
 
-            if handle is not None and frame.get("commands"):
-                await emit("commands", {"commands": handle.agent.commands.describe()})
+            if frame.get("commands"):
+                # Answered before any conversation exists, so a client can offer
+                # completion for the very first thing someone types.
+                registry = handle.agent.commands if handle is not None else builtin_commands()
+                await emit("commands", {"commands": registry.describe()})
                 continue
 
             if handle is not None and frame.get("sync") is not None:
@@ -1308,7 +1312,12 @@ async def _chat_endpoint(websocket: WebSocket, services: Services) -> None:
             # never reaches the inbox.
             outcome = await handle.agent.command(steer or text)
             if outcome is not None:
-                await emit("command", outcome.to_dict())
+                # With the gauge, because /compact and /clear are exactly the
+                # commands that move it, and neither ends a turn.
+                await emit(
+                    "command",
+                    {**outcome.to_dict(), "context": handle.agent.context_snapshot()},
+                )
                 continue
 
             if steer:

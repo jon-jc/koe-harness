@@ -426,3 +426,73 @@ async def test_an_agent_woken_with_an_empty_queue_spends_no_model_call() -> None
     await agent.wait_idle()
 
     assert adapter.requests == []
+
+
+# --------------------------------------------------------------------------
+# the context gauge
+# --------------------------------------------------------------------------
+
+
+async def test_every_turn_end_reports_how_full_the_window_is() -> None:
+    """So a client can show context pressure continuously, rather than only
+    when someone thinks to ask with /context."""
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def record(event: str, payload: dict[str, Any]) -> None:
+        events.append((event, payload))
+
+    agent = HarnessAgent(Scripted(ModelReply(text="hello")), tool_registry(), on_event=record)
+    await agent.ask("go")
+
+    ends = [payload for event, payload in events if event == "turn/end"]
+    assert len(ends) == 1
+    context = ends[0]["context"]
+    assert context["total"] > 0
+    assert context["total"] == context["message_tokens"] + context["schema_tokens"]
+    assert 0.0 <= context["pressure"] <= 1.0
+
+
+async def test_a_broken_gauge_does_not_end_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gauge is for watching. A turn that failed because its meter did
+    would be a worse bug than a missing number."""
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def record(event: str, payload: dict[str, Any]) -> None:
+        events.append((event, payload))
+
+    agent = HarnessAgent(Scripted(ModelReply(text="fine")), tool_registry(), on_event=record)
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("meter broke")
+
+    monkeypatch.setattr(type(agent.compactor.meter), "measure", broken)
+    outcome = await agent.ask("go")
+
+    assert outcome.reason == "completed"
+    assert outcome.text == "fine"
+    ends = [payload for event, payload in events if event == "turn/end"]
+    assert ends[-1]["context"] is None
+
+
+async def test_a_result_frame_names_the_call_frame_it_answers() -> None:
+    """A client pairs them by id. When the two frames disagreed about the key,
+    every tool row in the chat sat on "running" forever while the answer
+    arrived underneath it."""
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def record(event: str, payload: dict[str, Any]) -> None:
+        events.append((event, payload))
+
+    agent = HarnessAgent(
+        Scripted(calls(("c1", "read", {"path": "a"})), ModelReply(text="done")),
+        tool_registry(),
+        on_event=record,
+    )
+    await agent.ask("go")
+
+    call = next(payload for event, payload in events if event == "tool/call")
+    result = next(payload for event, payload in events if event == "tool/result")
+    assert result["id"] == call["id"] == "c1"
+    assert call["arguments"] == {"path": "a"}
+    assert result["ok"] is True
+    assert result["duration_ms"] >= 0

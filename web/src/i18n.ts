@@ -123,6 +123,47 @@ export interface Strings {
   readonly wsChat: string;
   readonly wsTerminal: string;
   readonly wsCode: string;
+  readonly agentTitle: string;
+  readonly agentNew: string;
+  readonly agentHide: string;
+  readonly chatWelcome: string;
+  readonly chatTip1: string;
+  readonly chatTip2: string;
+  readonly chatTip3: string;
+  readonly chatSuggest1: string;
+  readonly chatSuggest2: string;
+  readonly chatSuggest3: string;
+  readonly chatHintIdle: string;
+  readonly chatHintBusy: string;
+  readonly chatEscInterrupt: string;
+  readonly chatWorkedFor: string;
+  readonly chatMoreLines: string;
+  readonly chatCollapse: string;
+  readonly chatCompacted: string;
+  readonly chatInterrupted: string;
+  readonly chatNoOutput: string;
+  readonly sideSession: string;
+  readonly sideExplorer: string;
+  readonly sideOutline: string;
+  readonly sideHarness: string;
+  readonly outlineEmpty: string;
+  readonly harnessModel: string;
+  readonly harnessState: string;
+  readonly harnessContext: string;
+  readonly harnessTurns: string;
+  readonly harnessToolCalls: string;
+  readonly harnessCompactions: string;
+  readonly harnessCommands: string;
+  readonly harnessIdle: string;
+  readonly harnessRunning: string;
+  readonly harnessHint: string;
+  readonly shortcutSidebar: string;
+  readonly shortcutPanel: string;
+  readonly shortcutAgent: string;
+  readonly shortcutAgentPanel: string;
+  readonly shortcutTabs: string;
+  readonly statusContext: string;
+  readonly resetLayout: string;
   readonly chatPlaceholder: string;
   readonly chatSend: string;
   readonly chatSteer: string;
@@ -385,6 +426,47 @@ const JA: Strings = {
   wsChat: "チャット",
   wsTerminal: "端末",
   wsCode: "コード",
+  agentTitle: "エージェント",
+  agentNew: "新しい会話",
+  agentHide: "パネルを隠す",
+  chatWelcome: "koe ハーネスへようこそ",
+  chatTip1: "/ でコマンド、↑ で入力履歴",
+  chatTip2: "作業中に入力すると、次のステップで軌道修正されます",
+  chatTip3: "文字起こしを選択して Ctrl+L で引用",
+  chatSuggest1: "この会議を要約して",
+  chatSuggest2: "決定事項と担当者を一覧にして",
+  chatSuggest3: "このリポジトリの構成を説明して",
+  chatHintIdle: "⏎ 送信 · ⇧⏎ 改行 · / コマンド · ↑ 履歴",
+  chatHintBusy: "⏵⏵ 軌道修正モード — 入力は次のステップに反映",
+  chatEscInterrupt: "Esc で中断",
+  chatWorkedFor: "{t} 作業しました",
+  chatMoreLines: "… 他 {n} 行（クリックで展開）",
+  chatCollapse: "折りたたむ",
+  chatCompacted: "コンテキストを圧縮しました",
+  chatInterrupted: "ユーザーが中断しました",
+  chatNoOutput: "（出力なし）",
+  sideSession: "セッション",
+  sideExplorer: "エクスプローラー",
+  sideOutline: "アウトライン",
+  sideHarness: "ハーネス",
+  outlineEmpty: "発言が記録されると、ここから各発言に移動できます。",
+  harnessModel: "モデル",
+  harnessState: "状態",
+  harnessContext: "コンテキスト",
+  harnessTurns: "ターン",
+  harnessToolCalls: "ツール呼び出し",
+  harnessCompactions: "圧縮",
+  harnessCommands: "コマンド",
+  harnessIdle: "待機中",
+  harnessRunning: "実行中",
+  harnessHint: "エージェントの実行状況です。コンテキストが 80% を超えると、古い会話が要約されます。",
+  shortcutSidebar: "サイドバーの表示切替",
+  shortcutPanel: "端末パネルの表示切替",
+  shortcutAgent: "エージェントへ移動 / 選択範囲を引用",
+  shortcutAgentPanel: "エージェントパネルの表示切替",
+  shortcutTabs: "タブの切り替え",
+  statusContext: "コンテキスト使用量",
+  resetLayout: "レイアウトを初期化",
   chatPlaceholder: "この会議やコードについて質問してください",
   chatSend: "送信",
   chatSteer: "軌道修正",
@@ -638,6 +720,47 @@ const EN: Strings = {
   wsChat: "Chat",
   wsTerminal: "Terminal",
   wsCode: "Code",
+  agentTitle: "Agent",
+  agentNew: "New conversation",
+  agentHide: "Hide panel",
+  chatWelcome: "Welcome to koe harness",
+  chatTip1: "/ for commands, ↑ for history",
+  chatTip2: "Type while it works — it lands at the next step",
+  chatTip3: "Select transcript text and press Ctrl+L to quote it",
+  chatSuggest1: "Summarize this meeting",
+  chatSuggest2: "List the decisions and who owns them",
+  chatSuggest3: "Explain how this repository is laid out",
+  chatHintIdle: "⏎ send · ⇧⏎ newline · / commands · ↑ history",
+  chatHintBusy: "⏵⏵ steer mode — what you type lands at the next step",
+  chatEscInterrupt: "esc to interrupt",
+  chatWorkedFor: "Worked for {t}",
+  chatMoreLines: "… +{n} lines (click to expand)",
+  chatCollapse: "collapse",
+  chatCompacted: "Context compacted",
+  chatInterrupted: "Interrupted by user",
+  chatNoOutput: "(no output)",
+  sideSession: "Session",
+  sideExplorer: "Explorer",
+  sideOutline: "Outline",
+  sideHarness: "Harness",
+  outlineEmpty: "Once people speak, jump to any line from here.",
+  harnessModel: "Model",
+  harnessState: "State",
+  harnessContext: "Context",
+  harnessTurns: "Turns",
+  harnessToolCalls: "Tool calls",
+  harnessCompactions: "Compactions",
+  harnessCommands: "Commands",
+  harnessIdle: "idle",
+  harnessRunning: "running",
+  harnessHint: "What the agent runtime is doing. Past 80% of the window, older conversation is summarized to make room.",
+  shortcutSidebar: "toggle the sidebar",
+  shortcutPanel: "toggle the terminal panel",
+  shortcutAgent: "focus the agent / quote the selection",
+  shortcutAgentPanel: "toggle the agent panel",
+  shortcutTabs: "switch tabs",
+  statusContext: "context window in use",
+  resetLayout: "Reset layout",
   chatPlaceholder: "Ask about this meeting, or about the code",
   chatSend: "Send",
   chatSteer: "Steer",
